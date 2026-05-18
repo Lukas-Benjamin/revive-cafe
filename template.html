@@ -1,0 +1,1759 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>K21 Café</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script crossorigin src="https://unpkg.com/react@18.2.0/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18.2.0/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
+  <script>
+    firebase.initializeApp("__FIREBASE_CONFIG__");
+    const db = firebase.firestore();
+    db.enablePersistence({ synchronizeTabs: true }).catch(() => {});
+  </script>
+  <style>
+    * { box-sizing: border-box; }
+    ::-webkit-scrollbar { width: 5px; }
+    ::-webkit-scrollbar-track { background: #f8fafc; }
+    ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
+    body { background: #f8fafc; color: #0f172a; font-family: 'Montserrat', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; margin: 0; }
+    .glass { background: #ffffff; border: 1px solid rgba(0,0,0,0.08); }
+    .glass-hover:hover { background: #f1f5f9; }
+    .glow { box-shadow: 0 4px 32px rgba(0,0,0,0.08); }
+    .grad { color: #0f172a; -webkit-text-fill-color: #0f172a; background: none; font-weight: 900; letter-spacing: -0.03em; }
+    input:focus, textarea:focus, select:focus { outline: none; border-color: rgba(0,0,0,0.25) !important; }
+    select option { background: #ffffff; color: #0f172a; }
+    @keyframes up { from { opacity:0; transform:translateY(8px); } to { opacity:1; transform:translateY(0); } }
+    @keyframes fadeIn { from{opacity:0}to{opacity:1} }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
+    .up { animation: up .2s ease; }
+    .pill { display:inline-flex; align-items:center; padding: 2px 8px; border-radius: 99px; font-size: 11px; font-weight: 600; }
+    .dot { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; display: inline-block; }
+    .toggle { width: 36px; height: 20px; border-radius: 10px; position: relative; cursor: pointer; transition: background .2s; border: none; }
+    .toggle::after { content:''; position:absolute; top:2px; left:2px; width:16px; height:16px; border-radius:50%; background:#fff; transition:transform .2s; }
+    .toggle.on::after { transform: translateX(16px); }
+    .modal-overlay { animation: fadeIn .15s ease; }
+    .product-btn:active { transform: scale(0.96); }
+    .product-btn { transition: transform .1s, box-shadow .1s; }
+  </style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useEffect, useRef, useMemo, useCallback } = React;
+
+// ─── Icons ────────────────────────────────────────────────────────────────────
+const SI = ({ p, size=16, stroke=2 }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none"
+    stroke="currentColor" strokeWidth={stroke} strokeLinecap="round" strokeLinejoin="round">
+    {[].concat(p).map((d,i) => <path key={i} d={d}/>)}
+  </svg>
+);
+const IC = {
+  plus:     "M12 5v14M5 12h14",
+  edit:     ["M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5","M17.586 3.586a2 2 0 012.828 2.828L12 15l-4 1 1-4 8.586-8.586z"],
+  trash:    ["M3 6h18","M19 6l-1 14H6L5 6","M8 6V4h8v2"],
+  x:        "M18 6L6 18M6 6l12 12",
+  check:    "M20 6L9 17l-5-5",
+  chevDown: "M6 9l6 6 6-6",
+  chevLeft: "M15 18l-6-6 6-6",
+  chevRight:"M9 18l6-6-6-6",
+  logout:   "M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1",
+  users:    ["M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2","M9 11a4 4 0 100-8 4 4 0 000 8","M23 21v-2a4 4 0 00-3-3.87","M16 3.13a4 4 0 010 7.75"],
+  person:   ["M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2","M12 11a4 4 0 100-8 4 4 0 000 8"],
+  cart:     ["M6 2L3 6v14a2 2 0 002 2h14a2 2 0 002-2V6l-3-4z","M3 6h18","M16 10a4 4 0 01-8 0"],
+  bag:      ["M6 2L3 6v14a2 2 0 002 2h14a2 2 0 002-2V6l-3-4z","M3 6h18"],
+  orders:   ["M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2","M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2","M9 12h6M9 16h4"],
+  shift:    ["M12 2v10l4 2","M2 12a10 10 0 1020 0 10 10 0 00-20 0"],
+  tag:      ["M20.59 13.41l-7.17 7.17a2 2 0 01-2.83 0L2 12V2h10l8.59 8.59a2 2 0 010 2.82z","M7 7h.01"],
+  voucher:  ["M2 9a3 3 0 010-6h20a3 3 0 010 6","M2 15a3 3 0 000 6h20a3 3 0 000-6","M6 9v6M18 9v6"],
+  card:     ["M1 4h22v16H1z","M1 10h22"],
+  chart:    "M3 3v18h18M7 16l4-4 4 4 4-5",
+  cog:      ["M12 15a3 3 0 100-6 3 3 0 000 6","M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83 0 2 2 0 010-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 010-2.83 2 2 0 012.83 0l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 0 2 2 0 010 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"],
+  lock:     ["M19 11H5a2 2 0 00-2 2v7a2 2 0 002 2h14a2 2 0 002-2v-7a2 2 0 00-2-2z","M17 11V7a5 5 0 00-10 0v4"],
+  eye:      ["M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z","M12 9a3 3 0 100 6 3 3 0 000-6z"],
+  eyeOff:   "M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19m-6.72-1.07a3 3 0 11-4.24-4.24M1 1l22 22",
+  copy:     ["M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1","M8 5a2 2 0 002 2h4a2 2 0 002-2M8 5a2 2 0 012-2h4a2 2 0 012 2"],
+  minus:    "M5 12h14",
+  refresh:  "M23 4v6h-6M1 20v-6h6M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15",
+  cash:     ["M12 1v22","M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6"],
+  download: "M3 17v3h18v-3M12 3v11m-4-4l4 4 4-4",
+};
+
+// ─── Utilities ────────────────────────────────────────────────────────────────
+const genId    = () => Math.random().toString(36).slice(2) + Date.now().toString(36);
+const fmt2     = n => (n||0).toFixed(2);
+const fmtEur   = n => `€${fmt2(n)}`;
+const fmtTime  = ts => { if (!ts) return ''; const d = ts.toDate ? ts.toDate() : new Date(ts); return d.toLocaleTimeString('de-DE',{hour:'2-digit',minute:'2-digit'}); };
+const fmtDate  = ts => { if (!ts) return ''; const d = ts.toDate ? ts.toDate() : new Date(ts); return d.toLocaleDateString('de-DE'); };
+const fmtDateTime = ts => { if (!ts) return ''; const d = ts.toDate ? ts.toDate() : new Date(ts); return d.toLocaleDateString('de-DE') + ' ' + d.toLocaleTimeString('de-DE',{hour:'2-digit',minute:'2-digit'}); };
+const initials = n => (n||'').trim().split(/\s+/).slice(0,2).map(w=>w[0]||'').join('').toUpperCase() || '?';
+const padNum   = n => String(n).padStart(3,'0');
+
+// ─── Constants ────────────────────────────────────────────────────────────────
+const OWNER_NAME = 'Admin';
+const OWNER_PIN  = 'K21ADMIN';
+const ROLE_LABELS = { owner:'Admin', finanzen:'Finanzen', teamleiter:'Team-Leiter', kassierer:'Kassierer', barista:'Barista' };
+const ROLE_OPTIONS = ['finanzen','teamleiter','kassierer','barista'];
+const INP    = "bg-black/5 border border-black/10 rounded-xl px-3 py-2.5 text-sm text-slate-800 placeholder-slate-500 transition-all w-full";
+const INP_SM = "bg-black/5 border border-black/10 rounded-lg px-2.5 py-1.5 text-xs text-slate-800 placeholder-slate-500 transition-all";
+
+const DEFAULT_CAFE = () => ({
+  produkte: [],
+  kategorien: [],
+  gutscheine: [],
+  wertkarten: [],
+  schichten: [],
+  bestellungen: [],
+  einstellungen: { min_karten_betrag: 10, waehrung: 'EUR' }
+});
+
+// ─── Role permissions ─────────────────────────────────────────────────────────
+const can = (role, action) => {
+  if (!role) return false;
+  const map = {
+    kasse:        ['owner','teamleiter','kassierer'],
+    bestellungen: ['owner','teamleiter','kassierer','barista','finanzen'],
+    schicht:      ['owner','teamleiter','kassierer'],
+    produkte:     ['owner','teamleiter'],
+    gutscheine:   ['owner','finanzen','teamleiter'],
+    wertkarten:   ['owner','finanzen','teamleiter'],
+    finanzen:     ['owner','finanzen'],
+    einstellungen:['owner'],
+    personen:     ['owner','teamleiter'],
+    stornieren:   ['owner','teamleiter'],
+  };
+  return (map[action]||[]).includes(role);
+};
+
+// ─── Toast ────────────────────────────────────────────────────────────────────
+const ToastContainer = ({ toasts }) => (
+  <div style={{position:'fixed',bottom:20,right:20,zIndex:9000,display:'flex',flexDirection:'column',gap:8,pointerEvents:'none'}}>
+    {toasts.map(t => (
+      <div key={t.id} className="up px-4 py-2.5 rounded-xl text-sm font-semibold shadow-xl"
+        style={{background:t.type==='error'?'rgba(239,68,68,0.92)':t.type==='warn'?'rgba(245,158,11,0.92)':'rgba(16,185,129,0.92)',color:'#fff',pointerEvents:'auto'}}>
+        {t.msg}
+      </div>
+    ))}
+  </div>
+);
+
+const useToast = () => {
+  const [toasts, setToasts] = useState([]);
+  const toast = useCallback((msg, type='ok') => {
+    const id = genId();
+    setToasts(p => [...p, {id,msg,type}]);
+    setTimeout(() => setToasts(p => p.filter(t=>t.id!==id)), 3000);
+  }, []);
+  return [toasts, toast];
+};
+
+// ─── Modal ────────────────────────────────────────────────────────────────────
+const Modal = ({ title, onClose, children, wide=false, extraWide=false }) => {
+  useEffect(() => {
+    const h = e => { if (e.key==='Escape') onClose(); };
+    window.addEventListener('keydown', h);
+    return () => window.removeEventListener('keydown', h);
+  }, [onClose]);
+  const wCls = extraWide ? 'max-w-3xl' : wide ? 'max-w-2xl' : 'max-w-md';
+  return (
+    <div className="modal-overlay" style={{position:'fixed',inset:0,zIndex:5000,display:'flex',alignItems:'center',justifyContent:'center',padding:'16px',background:'rgba(0,0,0,0.75)'}}
+      onClick={e=>{ if (e.target===e.currentTarget) onClose(); }}>
+      <div className={`glass rounded-2xl glow w-full ${wCls}`}
+        style={{maxHeight:'92vh',overflowY:'auto'}} onClick={e=>e.stopPropagation()}>
+        <div className="flex items-center justify-between px-5 py-4"
+          style={{borderBottom:'1px solid rgba(0,0,0,0.08)',position:'sticky',top:0,background:'rgba(255,255,255,0.99)',zIndex:10}}>
+          <h3 className="font-semibold text-slate-800 text-sm">{title}</h3>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-700 transition-all"><SI p={IC.x} size={15}/></button>
+        </div>
+        <div className="p-5">{children}</div>
+      </div>
+    </div>
+  );
+};
+
+// ─── Avatar ───────────────────────────────────────────────────────────────────
+const Avatar = ({ name, color, size=32 }) => (
+  <div style={{width:size,height:size,borderRadius:'50%',background:color||'#8b5cf6',display:'flex',alignItems:'center',justifyContent:'center',fontSize:Math.round(size*0.36),fontWeight:700,color:'#fff',flexShrink:0,letterSpacing:'-0.5px'}}>
+    {initials(name)}
+  </div>
+);
+
+// ─── SyncDot ──────────────────────────────────────────────────────────────────
+const SyncDot = ({ state }) => {
+  const MAP = { connecting:['#64748b','Verbinden…'], synced:['#10b981','Sync OK'], saving:['#f59e0b','Speichern…'], error:['#ef4444','Offline'] };
+  const [col, label] = MAP[state] || MAP.connecting;
+  return (
+    <div title={label} style={{width:9,height:9,borderRadius:'50%',background:col,flexShrink:0,
+      boxShadow:state==='synced'?`0 0 5px ${col}99`:'none',
+      animation:state==='saving'?'pulse 1s infinite':'none'}}/>
+  );
+};
+
+// ─── Login View ───────────────────────────────────────────────────────────────
+const LoginView = ({ onLogin }) => {
+  const [users, setUsers]    = useState([]);
+  const [selected, setSelected] = useState(null);
+  const [pin, setPin]        = useState('');
+  const [showPin, setShowPin] = useState(false);
+  const [err, setErr]        = useState('');
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    const unsub = db.collection('k21-users').onSnapshot(
+      snap => setUsers(snap.docs.map(d=>({id:d.id,...d.data()}))),
+      () => {}
+    );
+    return () => unsub();
+  }, []);
+
+  const allUsers = [{ id:'__owner__', name: OWNER_NAME, role:'owner' }, ...users];
+
+  const handleLogin = async () => {
+    if (!selected) { setErr('Bitte Person auswählen'); return; }
+    setLoading(true); setErr('');
+    if (selected.id === '__owner__') {
+      if (pin === OWNER_PIN) { onLogin({ ...selected, role:'owner' }); }
+      else { setErr('Falscher PIN'); setPin(''); }
+    } else {
+      if (pin === selected.pin) { onLogin(selected); }
+      else { setErr('Falscher PIN'); setPin(''); }
+    }
+    setLoading(false);
+  };
+
+  return (
+    <div style={{minHeight:'100vh',display:'flex',alignItems:'center',justifyContent:'center',background:'#f8fafc'}}>
+      <div className="glass rounded-2xl glow p-8 w-full max-w-sm">
+        <div className="text-center mb-6">
+          <div className="w-14 h-14 rounded-2xl flex items-center justify-center mx-auto mb-3"
+            style={{background:'#0f172a'}}>
+            <span className="text-2xl">☕</span>
+          </div>
+          <h1 className="text-xl font-bold text-slate-800">K21 Café</h1>
+          <p className="text-xs text-slate-500 mt-1">Point of Sale System</p>
+        </div>
+        {!selected ? (
+          <div>
+            <p className="text-xs font-semibold text-slate-500 mb-3 uppercase tracking-wider">Person auswählen</p>
+            <div className="flex flex-col gap-2">
+              {allUsers.map(u => (
+                <button key={u.id} onClick={()=>{setSelected(u);setErr('');setPin('');}}
+                  className="glass-hover glass rounded-xl px-4 py-3 flex items-center gap-3 transition-all text-left">
+                  <Avatar name={u.name} color={u.farbe||'#8b5cf6'} size={36}/>
+                  <div>
+                    <div className="text-sm font-semibold text-slate-800">{u.name}</div>
+                    <div className="text-xs text-slate-500">{ROLE_LABELS[u.role]||u.role}</div>
+                  </div>
+                </button>
+              ))}
+            </div>
+          </div>
+        ) : (
+          <div>
+            <button onClick={()=>{setSelected(null);setPin('');setErr('');}}
+              className="flex items-center gap-1 text-xs text-slate-500 hover:text-slate-700 mb-4 transition-all">
+              <SI p={IC.chevLeft} size={13}/> Zurück
+            </button>
+            <div className="flex items-center gap-3 mb-5 p-3 rounded-xl" style={{background:'#f1f5f9'}}>
+              <Avatar name={selected.name} color={selected.farbe||'#8b5cf6'} size={36}/>
+              <div>
+                <div className="text-sm font-semibold text-slate-800">{selected.name}</div>
+                <div className="text-xs text-slate-500">{ROLE_LABELS[selected.role]||selected.role}</div>
+              </div>
+            </div>
+            <label className="text-xs font-semibold text-slate-600 mb-1 block">PIN eingeben</label>
+            <div className="relative">
+              <input type={showPin?'text':'password'} value={pin} onChange={e=>{setPin(e.target.value);setErr('');}}
+                onKeyDown={e=>{ if(e.key==='Enter') handleLogin(); }}
+                className={INP} placeholder="PIN" autoFocus/>
+              <button type="button" onClick={()=>setShowPin(v=>!v)}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600">
+                <SI p={showPin?IC.eyeOff:IC.eye} size={14}/>
+              </button>
+            </div>
+            {err && <p className="text-xs text-red-500 mt-2">{err}</p>}
+            <button onClick={handleLogin} disabled={!pin||loading}
+              className="w-full mt-4 py-2.5 rounded-xl text-sm font-semibold text-white transition-all disabled:opacity-40"
+              style={{background:'#0f172a'}}>
+              {loading ? 'Wird geprüft…' : 'Anmelden'}
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
+// ─── KasseView ────────────────────────────────────────────────────────────────
+const KasseView = ({ cafe, user, toast, activeSchicht }) => {
+  const [warenkorb, setWarenkorb]   = useState([]);
+  const [checkoutOpen, setCheckoutOpen] = useState(false);
+  const [aktivKat, setAktivKat]     = useState('alle');
+
+  const aktivProdukte = useMemo(() =>
+    cafe.produkte.filter(p => p.aktiv !== false), [cafe.produkte]);
+
+  const kategorien = useMemo(() => {
+    const used = new Set(aktivProdukte.map(p=>p.kategorie_id));
+    return cafe.kategorien.filter(k=>used.has(k.id));
+  }, [cafe.kategorien, aktivProdukte]);
+
+  const angezeigt = useMemo(() =>
+    aktivKat==='alle' ? aktivProdukte : aktivProdukte.filter(p=>p.kategorie_id===aktivKat),
+    [aktivProdukte, aktivKat]);
+
+  const gesamt = useMemo(() => warenkorb.reduce((s,i)=>s+i.preis*i.menge,0), [warenkorb]);
+
+  const addToCart = (p) => {
+    setWarenkorb(prev => {
+      const ex = prev.find(i=>i.produkt_id===p.id);
+      if (ex) return prev.map(i=>i.produkt_id===p.id?{...i,menge:i.menge+1}:i);
+      return [...prev, {produkt_id:p.id,name:p.name,preis:p.preis,menge:1,emoji:p.emoji}];
+    });
+  };
+
+  const changeQty = (produkt_id, delta) => {
+    setWarenkorb(prev => {
+      const next = prev.map(i=>i.produkt_id===produkt_id?{...i,menge:i.menge+delta}:i)
+        .filter(i=>i.menge>0);
+      return next;
+    });
+  };
+
+  const removeItem = (produkt_id) => setWarenkorb(prev=>prev.filter(i=>i.produkt_id!==produkt_id));
+
+  const clearCart = () => setWarenkorb([]);
+
+  return (
+    <div style={{display:'flex',gap:'16px',height:'calc(100vh - 64px)',overflow:'hidden'}}>
+      {/* Left: product grid */}
+      <div style={{flex:'1 1 0',overflowY:'auto',paddingRight:'4px'}}>
+        {/* Category tabs */}
+        <div className="flex flex-wrap gap-2 mb-4">
+          <button onClick={()=>setAktivKat('alle')}
+            className={`pill transition-all ${aktivKat==='alle'?'text-white':'text-slate-600 bg-white border border-black/10'}`}
+            style={aktivKat==='alle'?{background:'#0f172a'}:{}}>
+            Alle
+          </button>
+          {kategorien.map(k => (
+            <button key={k.id} onClick={()=>setAktivKat(k.id)}
+              className={`pill transition-all ${aktivKat===k.id?'text-white border-transparent':'text-slate-700 bg-white border border-black/10'}`}
+              style={aktivKat===k.id?{background:k.farbe||'#6366f1'}:{}}>
+              {k.name}
+            </button>
+          ))}
+        </div>
+        {angezeigt.length === 0 && (
+          <div className="text-center py-16 text-slate-400 text-sm">Keine Produkte verfügbar</div>
+        )}
+        <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(140px,1fr))',gap:'10px'}}>
+          {angezeigt.map(p => {
+            const kat = cafe.kategorien.find(k=>k.id===p.kategorie_id);
+            const inCart = warenkorb.find(i=>i.produkt_id===p.id);
+            return (
+              <button key={p.id} onClick={()=>addToCart(p)}
+                className="product-btn glass rounded-2xl p-3 text-left relative hover:shadow-md"
+                style={{minHeight:'90px'}}>
+                {inCart && (
+                  <span className="absolute top-2 right-2 w-5 h-5 rounded-full flex items-center justify-center text-xs font-bold text-white"
+                    style={{background:'#0f172a',fontSize:'10px'}}>{inCart.menge}</span>
+                )}
+                <div className="text-2xl mb-1">{p.emoji||'🍵'}</div>
+                <div className="text-xs font-semibold text-slate-800 leading-tight">{p.name}</div>
+                <div className="text-xs font-bold mt-1" style={{color:kat?.farbe||'#6366f1'}}>{fmtEur(p.preis)}</div>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Right: cart */}
+      <div className="glass rounded-2xl glow flex flex-col" style={{width:'300px',flexShrink:0}}>
+        <div className="px-4 py-3 flex items-center justify-between" style={{borderBottom:'1px solid rgba(0,0,0,0.08)'}}>
+          <span className="font-semibold text-sm text-slate-800 flex items-center gap-2">
+            <SI p={IC.bag} size={15}/>Warenkorb
+          </span>
+          {warenkorb.length > 0 && (
+            <button onClick={clearCart} className="text-xs text-slate-400 hover:text-red-500 transition-all">Leeren</button>
+          )}
+        </div>
+        <div style={{flex:1,overflowY:'auto',padding:'8px'}}>
+          {warenkorb.length===0 && (
+            <div className="text-center py-8 text-slate-400 text-xs">Noch leer</div>
+          )}
+          {warenkorb.map(item => (
+            <div key={item.produkt_id} className="flex items-center gap-2 px-2 py-2 rounded-xl glass-hover">
+              <span className="text-base">{item.emoji||'🍵'}</span>
+              <div style={{flex:1,minWidth:0}}>
+                <div className="text-xs font-semibold text-slate-800 truncate">{item.name}</div>
+                <div className="text-xs text-slate-500">{fmtEur(item.preis * item.menge)}</div>
+              </div>
+              <div className="flex items-center gap-1">
+                <button onClick={()=>changeQty(item.produkt_id,-1)}
+                  className="w-6 h-6 rounded-lg flex items-center justify-center text-slate-600 hover:bg-black/10 transition-all">
+                  <SI p={IC.minus} size={12}/>
+                </button>
+                <span className="text-xs font-bold w-4 text-center">{item.menge}</span>
+                <button onClick={()=>changeQty(item.produkt_id,1)}
+                  className="w-6 h-6 rounded-lg flex items-center justify-center text-slate-600 hover:bg-black/10 transition-all">
+                  <SI p={IC.plus} size={12}/>
+                </button>
+              </div>
+              <button onClick={()=>removeItem(item.produkt_id)}
+                className="text-slate-300 hover:text-red-400 transition-all ml-1">
+                <SI p={IC.x} size={13}/>
+              </button>
+            </div>
+          ))}
+        </div>
+        <div className="p-4" style={{borderTop:'1px solid rgba(0,0,0,0.08)'}}>
+          <div className="flex justify-between items-center mb-3">
+            <span className="text-sm font-semibold text-slate-600">Gesamt</span>
+            <span className="text-lg font-bold text-slate-900">{fmtEur(gesamt)}</span>
+          </div>
+          <button
+            disabled={warenkorb.length===0 || !activeSchicht}
+            onClick={()=>setCheckoutOpen(true)}
+            className="w-full py-3 rounded-xl text-sm font-bold text-white transition-all disabled:opacity-40"
+            style={{background:'#0f172a'}}>
+            {!activeSchicht ? 'Keine Schicht aktiv' : 'Zur Kasse →'}
+          </button>
+          {!activeSchicht && (
+            <p className="text-xs text-slate-400 text-center mt-2">Schicht starten um Bestellungen anzunehmen</p>
+          )}
+        </div>
+      </div>
+
+      {checkoutOpen && (
+        <CheckoutModal
+          warenkorb={warenkorb}
+          gesamt={gesamt}
+          cafe={cafe}
+          schicht={activeSchicht}
+          user={user}
+          toast={toast}
+          onClose={()=>setCheckoutOpen(false)}
+          onSuccess={()=>{ clearCart(); setCheckoutOpen(false); }}
+        />
+      )}
+    </div>
+  );
+};
+
+// ─── Checkout Modal ───────────────────────────────────────────────────────────
+const CheckoutModal = ({ warenkorb, gesamt, cafe, schicht, user, toast, onClose, onSuccess }) => {
+  const [zahlungen, setZahlungen] = useState([]);
+  const [aktuelleArt, setAktuelleArt] = useState('bar');
+  const [barBetrag, setBarBetrag]     = useState('');
+  const [gutscheinCode, setGutscheinCode] = useState('');
+  const [gutscheinBetrag, setGutscheinBetrag] = useState('');
+  const [wertkarteCode, setWertkarteCode]     = useState('');
+  const [wertkarteBetrag, setWertkarteBetrag] = useState('');
+  const [validatedGutschein, setValidatedGutschein] = useState(null);
+  const [validatedWertkarte, setValidatedWertkarte] = useState(null);
+  const [saving, setSaving] = useState(false);
+
+  const bezahlt  = zahlungen.reduce((s,z)=>s+z.betrag,0);
+  const restBetrag = Math.max(0, gesamt - bezahlt);
+  const wechsel   = aktuelleArt==='bar' && parseFloat(barBetrag)>restBetrag ? parseFloat(barBetrag)-restBetrag : 0;
+  const minKarte  = (cafe.einstellungen||{}).min_karten_betrag || 10;
+
+  const valGutschein = () => {
+    const g = cafe.gutscheine.find(x=>x.code.toUpperCase()===gutscheinCode.toUpperCase() && x.aktiv!==false && (x.betrag_rest||0)>=0.01);
+    if (!g) { toast('Gutschein nicht gefunden oder ungültig','error'); return; }
+    setValidatedGutschein(g);
+    setGutscheinBetrag(fmt2(Math.min(g.betrag_rest, restBetrag)));
+  };
+
+  const valWertkarte = () => {
+    const w = cafe.wertkarten.find(x=>x.code.toUpperCase()===wertkarteCode.toUpperCase() && (x.guthaben||0)>=0.01);
+    if (!w) { toast('Wertkarte nicht gefunden oder kein Guthaben','error'); return; }
+    setValidatedWertkarte(w);
+    setWertkarteBetrag(fmt2(Math.min(w.guthaben, restBetrag)));
+  };
+
+  const addZahlung = () => {
+    if (aktuelleArt==='bar') {
+      const b = Math.min(parseFloat(barBetrag)||0, restBetrag + wechsel);
+      if (b<=0) { toast('Betrag eingeben','error'); return; }
+      setZahlungen(p=>[...p,{art:'bar',betrag:Math.min(parseFloat(barBetrag)||0, restBetrag)}]);
+      setBarBetrag('');
+    } else if (aktuelleArt==='karte') {
+      if (restBetrag < minKarte) { toast(`Mindestbetrag per Karte: ${fmtEur(minKarte)}`,'warn'); return; }
+      setZahlungen(p=>[...p,{art:'karte',betrag:restBetrag}]);
+    } else if (aktuelleArt==='gutschein') {
+      if (!validatedGutschein) { toast('Gutschein validieren','error'); return; }
+      const b = Math.min(parseFloat(gutscheinBetrag)||0, validatedGutschein.betrag_rest, restBetrag);
+      if (b<=0) { toast('Betrag eingeben','error'); return; }
+      setZahlungen(p=>[...p,{art:'gutschein',betrag:b,code:validatedGutschein.code,gutschein_id:validatedGutschein.id}]);
+      setGutscheinCode(''); setGutscheinBetrag(''); setValidatedGutschein(null);
+    } else if (aktuelleArt==='wertkarte') {
+      if (!validatedWertkarte) { toast('Wertkarte validieren','error'); return; }
+      const b = Math.min(parseFloat(wertkarteBetrag)||0, validatedWertkarte.guthaben, restBetrag);
+      if (b<=0) { toast('Betrag eingeben','error'); return; }
+      setZahlungen(p=>[...p,{art:'wertkarte',betrag:b,code:validatedWertkarte.code,wertkarte_id:validatedWertkarte.id}]);
+      setWertkarteCode(''); setWertkarteBetrag(''); setValidatedWertkarte(null);
+    }
+  };
+
+  const saveOrder = async () => {
+    if (restBetrag > 0.005) { toast('Noch nicht vollständig bezahlt','error'); return; }
+    setSaving(true);
+    try {
+      const ref = db.collection('k21-cafe').doc('data');
+      const snap = await ref.get();
+      const data = snap.exists ? snap.data() : DEFAULT_CAFE();
+
+      // Count orders in shift for numbering
+      const schichtBestellungen = (data.bestellungen||[]).filter(b=>b.schicht_id===schicht.id);
+      const nummer = padNum(schichtBestellungen.length + 1);
+
+      const neueBestellung = {
+        id: genId(),
+        schicht_id: schicht.id,
+        nummer,
+        artikel: warenkorb.map(i=>({...i, fertig:false})),
+        gesamt,
+        zahlung: zahlungen,
+        status: 'offen',
+        erstellt_am: new Date().toISOString(),
+        kassiererId: user.id,
+        kassiererName: user.name,
+      };
+
+      // Update gutscheine
+      const updGutscheine = (data.gutscheine||[]).map(g => {
+        const z = zahlungen.find(z=>z.art==='gutschein'&&z.gutschein_id===g.id);
+        if (!z) return g;
+        const rest = (g.betrag_rest||0) - z.betrag;
+        return { ...g, betrag_rest: Math.max(0, rest), aktiv: rest > 0.005 };
+      });
+
+      // Update wertkarten
+      const updWertkarten = (data.wertkarten||[]).map(w => {
+        const z = zahlungen.find(z=>z.art==='wertkarte'&&z.wertkarte_id===w.id);
+        if (!z) return w;
+        return { ...w, guthaben: Math.max(0, (w.guthaben||0) - z.betrag) };
+      });
+
+      // Update schicht
+      const updSchichten = (data.schichten||[]).map(s => {
+        if (s.id!==schicht.id) return s;
+        return { ...s, bestellungen_count:(s.bestellungen_count||0)+1, umsatz:(s.umsatz||0)+gesamt };
+      });
+
+      await ref.set({
+        ...data,
+        gutscheine: updGutscheine,
+        wertkarten: updWertkarten,
+        schichten: updSchichten,
+        bestellungen: [...(data.bestellungen||[]), neueBestellung],
+      });
+
+      toast(`Bestellung #${nummer} gespeichert ✓`);
+      onSuccess();
+    } catch(e) {
+      toast('Fehler beim Speichern: ' + e.message, 'error');
+    }
+    setSaving(false);
+  };
+
+  const artLabels = {bar:'Bar',karte:'Karte',gutschein:'Gutschein',wertkarte:'Wertkarte'};
+
+  return (
+    <Modal title="Kasse" onClose={onClose} wide>
+      <div className="flex flex-col gap-4">
+        {/* Items summary */}
+        <div className="rounded-xl p-3" style={{background:'#f8fafc'}}>
+          {warenkorb.map(i=>(
+            <div key={i.produkt_id} className="flex justify-between text-sm py-0.5">
+              <span className="text-slate-600">{i.emoji} {i.name} x{i.menge}</span>
+              <span className="font-semibold">{fmtEur(i.preis*i.menge)}</span>
+            </div>
+          ))}
+          <div className="flex justify-between text-sm font-bold pt-2 mt-2" style={{borderTop:'1px solid rgba(0,0,0,0.08)'}}>
+            <span>Gesamt</span><span>{fmtEur(gesamt)}</span>
+          </div>
+        </div>
+
+        {/* Paid so far */}
+        {zahlungen.length > 0 && (
+          <div>
+            <p className="text-xs font-semibold text-slate-500 mb-2">Zahlungen</p>
+            {zahlungen.map((z,i)=>(
+              <div key={i} className="flex items-center justify-between text-xs py-1">
+                <span className="text-slate-600">{artLabels[z.art]}{z.code?` (${z.code})`:''}</span>
+                <div className="flex items-center gap-2">
+                  <span className="font-semibold">{fmtEur(z.betrag)}</span>
+                  <button onClick={()=>setZahlungen(p=>p.filter((_,j)=>j!==i))} className="text-slate-300 hover:text-red-400"><SI p={IC.x} size={11}/></button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Rest */}
+        <div className="flex justify-between items-center">
+          <span className="text-sm font-semibold text-slate-600">Noch offen</span>
+          <span className={`text-lg font-bold ${restBetrag<=0.005?'text-green-600':'text-slate-900'}`}>
+            {restBetrag<=0.005 ? '✓ Bezahlt' : fmtEur(restBetrag)}
+          </span>
+        </div>
+
+        {restBetrag > 0.005 && (
+          <div>
+            <p className="text-xs font-semibold text-slate-500 mb-2">Zahlungsart hinzufügen</p>
+            <div className="flex flex-wrap gap-2 mb-3">
+              {['bar','karte','gutschein','wertkarte'].map(a=>(
+                <button key={a} onClick={()=>setAktuelleArt(a)}
+                  className={`pill transition-all ${aktuelleArt===a?'text-white':'text-slate-600 bg-white border border-black/10'}`}
+                  style={aktuelleArt===a?{background:'#0f172a'}:{}}>
+                  {artLabels[a]}
+                </button>
+              ))}
+            </div>
+
+            {aktuelleArt==='bar' && (
+              <div className="flex gap-2">
+                <input type="number" className={INP} placeholder={`Betrag (mind. ${fmtEur(restBetrag)})`}
+                  value={barBetrag} onChange={e=>setBarBetrag(e.target.value)} step="0.01" min="0"/>
+                <button onClick={addZahlung} className="px-4 py-2.5 rounded-xl text-sm font-semibold text-white flex-shrink-0"
+                  style={{background:'#0f172a'}}>+</button>
+              </div>
+            )}
+            {aktuelleArt==='bar' && parseFloat(barBetrag) > restBetrag && (
+              <p className="text-xs text-green-600 mt-1 font-semibold">Wechselgeld: {fmtEur(parseFloat(barBetrag)-restBetrag)}</p>
+            )}
+
+            {aktuelleArt==='karte' && (
+              <div>
+                {restBetrag < minKarte
+                  ? <p className="text-xs text-amber-600">Mindestbetrag für Kartenzahlung: {fmtEur(minKarte)}</p>
+                  : <button onClick={addZahlung} className="w-full py-2.5 rounded-xl text-sm font-semibold text-white"
+                      style={{background:'#0f172a'}}>
+                      Karte: {fmtEur(restBetrag)} hinzufügen
+                    </button>
+                }
+              </div>
+            )}
+
+            {aktuelleArt==='gutschein' && (
+              <div className="flex flex-col gap-2">
+                <div className="flex gap-2">
+                  <input type="text" className={INP} placeholder="Gutschein-Code"
+                    value={gutscheinCode} onChange={e=>{setGutscheinCode(e.target.value.toUpperCase());setValidatedGutschein(null);}}/>
+                  <button onClick={valGutschein} className="px-4 rounded-xl text-sm font-semibold text-white flex-shrink-0"
+                    style={{background:'#6366f1'}}>Prüfen</button>
+                </div>
+                {validatedGutschein && (
+                  <div>
+                    <p className="text-xs text-green-600 mb-2">Guthaben: {fmtEur(validatedGutschein.betrag_rest)}</p>
+                    <div className="flex gap-2">
+                      <input type="number" className={INP} placeholder="Betrag"
+                        value={gutscheinBetrag} onChange={e=>setGutscheinBetrag(e.target.value)} step="0.01"/>
+                      <button onClick={addZahlung} className="px-4 rounded-xl text-sm font-semibold text-white flex-shrink-0"
+                        style={{background:'#0f172a'}}>+</button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {aktuelleArt==='wertkarte' && (
+              <div className="flex flex-col gap-2">
+                <div className="flex gap-2">
+                  <input type="text" className={INP} placeholder="Wertkarten-Code"
+                    value={wertkarteCode} onChange={e=>{setWertkarteCode(e.target.value.toUpperCase());setValidatedWertkarte(null);}}/>
+                  <button onClick={valWertkarte} className="px-4 rounded-xl text-sm font-semibold text-white flex-shrink-0"
+                    style={{background:'#6366f1'}}>Prüfen</button>
+                </div>
+                {validatedWertkarte && (
+                  <div>
+                    <p className="text-xs text-green-600 mb-2">Guthaben: {fmtEur(validatedWertkarte.guthaben)}</p>
+                    <div className="flex gap-2">
+                      <input type="number" className={INP} placeholder="Betrag"
+                        value={wertkarteBetrag} onChange={e=>setWertkarteBetrag(e.target.value)} step="0.01"/>
+                      <button onClick={addZahlung} className="px-4 rounded-xl text-sm font-semibold text-white flex-shrink-0"
+                        style={{background:'#0f172a'}}>+</button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
+        <button onClick={saveOrder} disabled={restBetrag>0.005||saving}
+          className="w-full py-3 rounded-xl text-sm font-bold text-white transition-all disabled:opacity-40 mt-2"
+          style={{background:'#10b981'}}>
+          {saving ? 'Wird gespeichert…' : 'Bestellung abschließen ✓'}
+        </button>
+      </div>
+    </Modal>
+  );
+};
+
+// ─── BestellungenView ─────────────────────────────────────────────────────────
+const BestellungenView = ({ cafe, user, toast, activeSchicht }) => {
+  const [filter, setFilter] = useState('aktiv');
+
+  const bestellungen = useMemo(() => {
+    let list = [...(cafe.bestellungen||[])];
+    if (filter==='aktiv') list = list.filter(b=>b.status!=='storniert' && b.status!=='fertig');
+    else if (filter==='fertig') list = list.filter(b=>b.status==='fertig');
+    else if (filter==='schicht' && activeSchicht) list = list.filter(b=>b.schicht_id===activeSchicht.id);
+    return list.sort((a,b)=>new Date(b.erstellt_am)-new Date(a.erstellt_am));
+  }, [cafe.bestellungen, filter, activeSchicht]);
+
+  const markItemFertig = async (bestellung, artikelIdx) => {
+    const ref = db.collection('k21-cafe').doc('data');
+    const snap = await ref.get();
+    const data = snap.exists ? snap.data() : DEFAULT_CAFE();
+    const updBestellungen = (data.bestellungen||[]).map(b => {
+      if (b.id!==bestellung.id) return b;
+      const artikel = b.artikel.map((a,i)=>i===artikelIdx?{...a,fertig:true}:a);
+      const allFertig = artikel.every(a=>a.fertig);
+      return { ...b, artikel, status: allFertig?'fertig':b.status };
+    });
+    await ref.set({...data, bestellungen:updBestellungen}).catch(()=>{});
+  };
+
+  const stornieren = async (b) => {
+    if (!can(user.role,'stornieren')) return;
+    const ref = db.collection('k21-cafe').doc('data');
+    const snap = await ref.get();
+    const data = snap.exists ? snap.data() : DEFAULT_CAFE();
+    const updBestellungen = (data.bestellungen||[]).map(x=>x.id===b.id?{...x,status:'storniert'}:x);
+    const updSchichten = (data.schichten||[]).map(s=>{
+      if(s.id!==b.schicht_id) return s;
+      return {...s, umsatz:Math.max(0,(s.umsatz||0)-b.gesamt), bestellungen_count:Math.max(0,(s.bestellungen_count||1)-1)};
+    });
+    await ref.set({...data,bestellungen:updBestellungen,schichten:updSchichten}).catch(()=>{});
+    toast('Bestellung storniert','warn');
+  };
+
+  const artLabel = { bar:'Bar', karte:'Karte', gutschein:'Gutschein', wertkarte:'Wertkarte' };
+  const statusStyle = { offen:{bg:'#fef3c7',col:'#92400e'}, fertig:{bg:'#d1fae5',col:'#065f46'}, storniert:{bg:'#fee2e2',col:'#991b1b'} };
+
+  return (
+    <div>
+      <div className="flex flex-wrap gap-2 mb-4">
+        {[['aktiv','Offen'],['fertig','Fertig'],['schicht','Diese Schicht'],['alle','Alle']].map(([v,l])=>(
+          <button key={v} onClick={()=>setFilter(v)}
+            className={`pill transition-all ${filter===v?'text-white':'text-slate-600 bg-white border border-black/10'}`}
+            style={filter===v?{background:'#0f172a'}:{}}>
+            {l}
+          </button>
+        ))}
+      </div>
+      {bestellungen.length===0 && (
+        <div className="text-center py-16 text-slate-400 text-sm">Keine Bestellungen</div>
+      )}
+      <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(280px,1fr))',gap:'12px'}}>
+        {bestellungen.map(b => {
+          const ss = statusStyle[b.status]||statusStyle.offen;
+          return (
+            <div key={b.id} className="glass rounded-2xl p-4 glow">
+              <div className="flex items-start justify-between mb-3">
+                <div>
+                  <span className="text-lg font-bold text-slate-800">#{b.nummer}</span>
+                  <span className="text-xs text-slate-400 ml-2">{fmtDateTime(b.erstellt_am)}</span>
+                </div>
+                <span className="pill text-xs" style={{background:ss.bg,color:ss.col}}>
+                  {b.status==='offen'?'Offen':b.status==='fertig'?'Fertig':'Storniert'}
+                </span>
+              </div>
+              <div className="mb-3">
+                {(b.artikel||[]).map((a,i)=>(
+                  <div key={i} className="flex items-center gap-2 py-1">
+                    {(user.role==='barista'||can(user.role,'kasse')) && b.status==='offen' && (
+                      <button onClick={()=>markItemFertig(b,i)}
+                        className={`w-5 h-5 rounded-full border-2 flex items-center justify-center flex-shrink-0 transition-all ${a.fertig?'bg-green-500 border-green-500':'border-slate-300 hover:border-green-400'}`}>
+                        {a.fertig && <SI p={IC.check} size={10} stroke={3}/>}
+                      </button>
+                    )}
+                    <span className="text-sm text-slate-700">{a.emoji||''} {a.name} x{a.menge}</span>
+                    <span className="text-xs text-slate-400 ml-auto">{fmtEur(a.preis*a.menge)}</span>
+                  </div>
+                ))}
+              </div>
+              <div style={{borderTop:'1px solid rgba(0,0,0,0.06)',paddingTop:'8px'}} className="flex justify-between items-center">
+                <div className="text-xs text-slate-500">
+                  {(b.zahlung||[]).map((z,i)=>(
+                    <span key={i}>{i>0?', ':''}{artLabel[z.art]} {fmtEur(z.betrag)}</span>
+                  ))}
+                </div>
+                <span className="text-sm font-bold text-slate-800">{fmtEur(b.gesamt)}</span>
+              </div>
+              {can(user.role,'stornieren') && b.status==='offen' && (
+                <button onClick={()=>stornieren(b)}
+                  className="w-full mt-2 py-1.5 rounded-lg text-xs font-semibold text-red-500 hover:bg-red-50 transition-all border border-red-200">
+                  Stornieren
+                </button>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+};
+
+// ─── SchichtView ──────────────────────────────────────────────────────────────
+const SchichtView = ({ cafe, user, toast, activeSchicht, setActiveSchicht }) => {
+  const [kassenstart, setKassenstart] = useState('');
+  const [kassenende, setKassenende]   = useState('');
+  const [saving, setSaving]           = useState(false);
+  const [showBericht, setShowBericht] = useState(false);
+
+  const startSchicht = async () => {
+    setSaving(true);
+    const ref = db.collection('k21-cafe').doc('data');
+    const snap = await ref.get();
+    const data = snap.exists ? snap.data() : DEFAULT_CAFE();
+    const neu = {
+      id: genId(),
+      kassiererId: user.id,
+      kassiererName: user.name,
+      start: new Date().toISOString(),
+      ende: null,
+      kassenstart: parseFloat(kassenstart)||0,
+      kassenende: null,
+      bestellungen_count: 0,
+      umsatz: 0,
+    };
+    await ref.set({...data, schichten:[...(data.schichten||[]),neu]});
+    setActiveSchicht(neu);
+    toast('Schicht gestartet');
+    setSaving(false);
+  };
+
+  const endeSchicht = async () => {
+    setSaving(true);
+    const ref = db.collection('k21-cafe').doc('data');
+    const snap = await ref.get();
+    const data = snap.exists ? snap.data() : DEFAULT_CAFE();
+    const updated = { ...activeSchicht, ende: new Date().toISOString(), kassenende: parseFloat(kassenende)||0 };
+    const updSchichten = (data.schichten||[]).map(s=>s.id===activeSchicht.id?updated:s);
+    await ref.set({...data,schichten:updSchichten});
+    setActiveSchicht(null);
+    setShowBericht(false);
+    toast('Schicht beendet');
+    setSaving(false);
+  };
+
+  const schichtBestellungen = useMemo(() =>
+    activeSchicht ? (cafe.bestellungen||[]).filter(b=>b.schicht_id===activeSchicht.id&&b.status!=='storniert') : [],
+    [cafe.bestellungen, activeSchicht]);
+
+  const zahlungsBreakdown = useMemo(() => {
+    const map = {};
+    schichtBestellungen.forEach(b=>{
+      (b.zahlung||[]).forEach(z=>{
+        map[z.art] = (map[z.art]||0) + z.betrag;
+      });
+    });
+    return map;
+  }, [schichtBestellungen]);
+
+  const dauer = useMemo(() => {
+    if (!activeSchicht) return '';
+    const ms = Date.now() - new Date(activeSchicht.start).getTime();
+    const h = Math.floor(ms/3600000), m = Math.floor((ms%3600000)/60000);
+    return `${h}h ${m}min`;
+  }, [activeSchicht]);
+
+  const vergangeneSchichten = useMemo(() =>
+    (cafe.schichten||[]).filter(s=>s.ende).sort((a,b)=>new Date(b.start)-new Date(a.start)).slice(0,10),
+    [cafe.schichten]);
+
+  if (!activeSchicht) {
+    return (
+      <div>
+        <div className="glass rounded-2xl glow p-6 max-w-md mb-6">
+          <h2 className="text-sm font-bold text-slate-800 mb-4">Neue Schicht starten</h2>
+          <label className="text-xs font-semibold text-slate-600 mb-1 block">Kassenstart (Bargeld in Kasse)</label>
+          <input type="number" className={INP + ' mb-4'} placeholder="z.B. 50.00"
+            value={kassenstart} onChange={e=>setKassenstart(e.target.value)} step="0.01"/>
+          <button onClick={startSchicht} disabled={saving}
+            className="w-full py-3 rounded-xl text-sm font-bold text-white disabled:opacity-40"
+            style={{background:'#0f172a'}}>
+            Schicht starten
+          </button>
+        </div>
+        {vergangeneSchichten.length > 0 && (
+          <div>
+            <h3 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-3">Vergangene Schichten</h3>
+            <div className="flex flex-col gap-2">
+              {vergangeneSchichten.map(s=>(
+                <div key={s.id} className="glass rounded-xl px-4 py-3 flex items-center justify-between">
+                  <div>
+                    <div className="text-sm font-semibold text-slate-700">{s.kassiererName}</div>
+                    <div className="text-xs text-slate-400">{fmtDateTime(s.start)} – {fmtTime(s.ende)}</div>
+                  </div>
+                  <div className="text-right">
+                    <div className="text-sm font-bold text-slate-800">{fmtEur(s.umsatz||0)}</div>
+                    <div className="text-xs text-slate-400">{s.bestellungen_count||0} Bestellungen</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <div className="max-w-xl">
+      <div className="glass rounded-2xl glow p-6 mb-4">
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-sm font-bold text-slate-800">Aktive Schicht</h2>
+          <span className="pill" style={{background:'#d1fae5',color:'#065f46'}}>● Läuft</span>
+        </div>
+        <div className="grid grid-cols-2 gap-4 mb-4">
+          {[
+            ['Kassierer',activeSchicht.kassiererName],
+            ['Gestartet',fmtDateTime(activeSchicht.start)],
+            ['Dauer',dauer],
+            ['Kassenstart',fmtEur(activeSchicht.kassenstart||0)],
+            ['Bestellungen',activeSchicht.bestellungen_count||0],
+            ['Umsatz',fmtEur(activeSchicht.umsatz||0)],
+          ].map(([l,v])=>(
+            <div key={l}>
+              <div className="text-xs text-slate-400">{l}</div>
+              <div className="text-sm font-bold text-slate-800">{v}</div>
+            </div>
+          ))}
+        </div>
+        {Object.entries(zahlungsBreakdown).length > 0 && (
+          <div className="rounded-xl p-3 mb-4" style={{background:'#f8fafc'}}>
+            <p className="text-xs font-semibold text-slate-500 mb-2">Zahlungsarten</p>
+            {Object.entries(zahlungsBreakdown).map(([art,betrag])=>(
+              <div key={art} className="flex justify-between text-xs py-0.5">
+                <span className="text-slate-600">{art}</span>
+                <span className="font-semibold">{fmtEur(betrag)}</span>
+              </div>
+            ))}
+          </div>
+        )}
+        <label className="text-xs font-semibold text-slate-600 mb-1 block">Kassenende (Bargeld in Kasse)</label>
+        <input type="number" className={INP + ' mb-3'} placeholder="z.B. 80.00"
+          value={kassenende} onChange={e=>setKassenende(e.target.value)} step="0.01"/>
+        <button onClick={endeSchicht} disabled={saving}
+          className="w-full py-3 rounded-xl text-sm font-bold text-red-600 border border-red-200 hover:bg-red-50 transition-all disabled:opacity-40">
+          Schicht beenden
+        </button>
+      </div>
+    </div>
+  );
+};
+
+// ─── ProdukteView ─────────────────────────────────────────────────────────────
+const ProdukteView = ({ cafe, toast }) => {
+  const [modal, setModal] = useState(null);
+  const [katModal, setKatModal] = useState(null);
+  const [form, setForm] = useState({name:'',preis:'',kategorie_id:'',emoji:'',beschreibung:'',aktiv:true});
+  const [katForm, setKatForm] = useState({name:'',farbe:'#6366f1'});
+  const set = (k,v) => setForm(p=>({...p,[k]:v}));
+
+  const COLORS = ['#6366f1','#8b5cf6','#ec4899','#ef4444','#f97316','#f59e0b','#10b981','#06b6d4','#3b82f6'];
+
+  const saveProdukt = async () => {
+    if (!form.name.trim()||!form.preis) { toast('Name und Preis erforderlich','error'); return; }
+    const ref = db.collection('k21-cafe').doc('data');
+    const snap = await ref.get();
+    const data = snap.exists ? snap.data() : DEFAULT_CAFE();
+    let produkte = data.produkte||[];
+    if (modal==='add') {
+      produkte = [...produkte, {id:genId(),name:form.name.trim(),preis:parseFloat(form.preis),kategorie_id:form.kategorie_id,emoji:form.emoji,beschreibung:form.beschreibung,aktiv:true}];
+    } else {
+      produkte = produkte.map(p=>p.id===modal?{...p,name:form.name.trim(),preis:parseFloat(form.preis),kategorie_id:form.kategorie_id,emoji:form.emoji,beschreibung:form.beschreibung}:p);
+    }
+    await ref.set({...data,produkte});
+    toast(modal==='add'?'Produkt hinzugefügt':'Produkt aktualisiert');
+    setModal(null);
+  };
+
+  const toggleAktiv = async (p) => {
+    const ref = db.collection('k21-cafe').doc('data');
+    const snap = await ref.get();
+    const data = snap.exists ? snap.data() : DEFAULT_CAFE();
+    await ref.set({...data,produkte:(data.produkte||[]).map(x=>x.id===p.id?{...x,aktiv:!x.aktiv}:x)});
+  };
+
+  const deleteProdukt = async (id) => {
+    const ref = db.collection('k21-cafe').doc('data');
+    const snap = await ref.get();
+    const data = snap.exists ? snap.data() : DEFAULT_CAFE();
+    await ref.set({...data,produkte:(data.produkte||[]).filter(p=>p.id!==id)});
+    toast('Produkt gelöscht','warn');
+  };
+
+  const saveKat = async () => {
+    if (!katForm.name.trim()) return;
+    const ref = db.collection('k21-cafe').doc('data');
+    const snap = await ref.get();
+    const data = snap.exists ? snap.data() : DEFAULT_CAFE();
+    let kategorien = data.kategorien||[];
+    if (katModal==='add') {
+      kategorien = [...kategorien,{id:genId(),name:katForm.name.trim(),farbe:katForm.farbe}];
+    } else {
+      kategorien = kategorien.map(k=>k.id===katModal?{...k,name:katForm.name.trim(),farbe:katForm.farbe}:k);
+    }
+    await ref.set({...data,kategorien});
+    toast('Kategorie gespeichert');
+    setKatModal(null);
+  };
+
+  const deleteKat = async (id) => {
+    const ref = db.collection('k21-cafe').doc('data');
+    const snap = await ref.get();
+    const data = snap.exists ? snap.data() : DEFAULT_CAFE();
+    await ref.set({...data,kategorien:(data.kategorien||[]).filter(k=>k.id!==id)});
+    toast('Kategorie gelöscht','warn');
+  };
+
+  const openAdd = () => { setForm({name:'',preis:'',kategorie_id:cafe.kategorien[0]?.id||'',emoji:'☕',beschreibung:'',aktiv:true}); setModal('add'); };
+  const openEdit = (p) => { setForm({name:p.name,preis:p.preis,kategorie_id:p.kategorie_id,emoji:p.emoji||'',beschreibung:p.beschreibung||'',aktiv:p.aktiv!==false}); setModal(p.id); };
+
+  const groupedByKat = useMemo(() => {
+    const map = {};
+    (cafe.kategorien||[]).forEach(k=>{ map[k.id]={kat:k,produkte:[]}; });
+    map['_none'] = {kat:{id:'_none',name:'Ohne Kategorie',farbe:'#94a3b8'},produkte:[]};
+    (cafe.produkte||[]).forEach(p=>{
+      if (map[p.kategorie_id]) map[p.kategorie_id].produkte.push(p);
+      else map['_none'].produkte.push(p);
+    });
+    return Object.values(map).filter(g=>g.produkte.length>0||g.kat.id!=='_none');
+  }, [cafe.produkte, cafe.kategorien]);
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-4">
+        <div className="flex gap-2">
+          <button onClick={openAdd} className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-semibold text-white"
+            style={{background:'#0f172a'}}>
+            <SI p={IC.plus} size={14}/>Produkt
+          </button>
+          <button onClick={()=>{setKatForm({name:'',farbe:'#6366f1'});setKatModal('add');}}
+            className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-semibold border border-black/10 text-slate-700 hover:bg-black/5 transition-all">
+            <SI p={IC.tag} size={14}/>Kategorie
+          </button>
+        </div>
+      </div>
+
+      {/* Categories */}
+      {(cafe.kategorien||[]).length > 0 && (
+        <div className="flex flex-wrap gap-2 mb-4">
+          {(cafe.kategorien||[]).map(k=>(
+            <div key={k.id} className="flex items-center gap-2 pill" style={{background:k.farbe+'22',color:k.farbe}}>
+              <span>{k.name}</span>
+              <button onClick={()=>{setKatForm({name:k.name,farbe:k.farbe});setKatModal(k.id);}} className="hover:opacity-70"><SI p={IC.edit} size={10}/></button>
+              <button onClick={()=>deleteKat(k.id)} className="hover:opacity-70"><SI p={IC.x} size={10}/></button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Product grid */}
+      <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(200px,1fr))',gap:'10px'}}>
+        {(cafe.produkte||[]).map(p=>{
+          const kat = (cafe.kategorien||[]).find(k=>k.id===p.kategorie_id);
+          return (
+            <div key={p.id} className={`glass rounded-2xl p-4 ${p.aktiv===false?'opacity-50':''}`}>
+              <div className="flex items-start justify-between mb-2">
+                <span className="text-2xl">{p.emoji||'🍵'}</span>
+                <div className="flex items-center gap-1">
+                  <button onClick={()=>toggleAktiv(p)}
+                    className={`toggle ${p.aktiv!==false?'on':''}`}
+                    style={{background:p.aktiv!==false?'#10b981':'#cbd5e1'}}/>
+                </div>
+              </div>
+              <div className="text-sm font-bold text-slate-800 mb-0.5">{p.name}</div>
+              {kat && <span className="pill text-xs mb-2" style={{background:kat.farbe+'22',color:kat.farbe}}>{kat.name}</span>}
+              <div className="text-base font-bold mt-1" style={{color:kat?.farbe||'#6366f1'}}>{fmtEur(p.preis)}</div>
+              <div className="flex gap-2 mt-3">
+                <button onClick={()=>openEdit(p)} className="flex-1 py-1.5 rounded-lg text-xs font-semibold border border-black/10 hover:bg-black/5 transition-all">
+                  <SI p={IC.edit} size={12}/>
+                </button>
+                <button onClick={()=>deleteProdukt(p.id)} className="flex-1 py-1.5 rounded-lg text-xs font-semibold border border-red-200 text-red-500 hover:bg-red-50 transition-all">
+                  <SI p={IC.trash} size={12}/>
+                </button>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {modal && (
+        <Modal title={modal==='add'?'Produkt hinzufügen':'Produkt bearbeiten'} onClose={()=>setModal(null)}>
+          <div className="flex flex-col gap-3">
+            <div className="flex gap-2">
+              <div style={{flex:'0 0 72px'}}>
+                <label className="text-xs font-semibold text-slate-600 mb-1 block">Emoji</label>
+                <input className={INP} value={form.emoji} onChange={e=>set('emoji',e.target.value)} placeholder="☕" maxLength={4}/>
+              </div>
+              <div style={{flex:1}}>
+                <label className="text-xs font-semibold text-slate-600 mb-1 block">Name</label>
+                <input className={INP} value={form.name} onChange={e=>set('name',e.target.value)} placeholder="Cappuccino"/>
+              </div>
+            </div>
+            <div>
+              <label className="text-xs font-semibold text-slate-600 mb-1 block">Preis (€)</label>
+              <input type="number" className={INP} value={form.preis} onChange={e=>set('preis',e.target.value)} step="0.10" min="0" placeholder="2.50"/>
+            </div>
+            <div>
+              <label className="text-xs font-semibold text-slate-600 mb-1 block">Kategorie</label>
+              <select className={INP} value={form.kategorie_id} onChange={e=>set('kategorie_id',e.target.value)}>
+                <option value="">Keine Kategorie</option>
+                {(cafe.kategorien||[]).map(k=><option key={k.id} value={k.id}>{k.name}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="text-xs font-semibold text-slate-600 mb-1 block">Beschreibung (optional)</label>
+              <input className={INP} value={form.beschreibung} onChange={e=>set('beschreibung',e.target.value)} placeholder="z.B. Mit Oatly Haferdrink"/>
+            </div>
+            <div className="flex gap-2 mt-2">
+              <button onClick={()=>setModal(null)} className="flex-1 py-2.5 rounded-xl text-sm font-semibold border border-black/10 text-slate-700 hover:bg-black/5 transition-all">Abbrechen</button>
+              <button onClick={saveProdukt} className="flex-1 py-2.5 rounded-xl text-sm font-semibold text-white" style={{background:'#0f172a'}}>Speichern</button>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {katModal && (
+        <Modal title={katModal==='add'?'Kategorie hinzufügen':'Kategorie bearbeiten'} onClose={()=>setKatModal(null)}>
+          <div className="flex flex-col gap-3">
+            <div>
+              <label className="text-xs font-semibold text-slate-600 mb-1 block">Name</label>
+              <input className={INP} value={katForm.name} onChange={e=>setKatForm(p=>({...p,name:e.target.value}))} placeholder="Heißgetränke"/>
+            </div>
+            <div>
+              <label className="text-xs font-semibold text-slate-600 mb-2 block">Farbe</label>
+              <div className="flex flex-wrap gap-2">
+                {COLORS.map(c=>(
+                  <button key={c} onClick={()=>setKatForm(p=>({...p,farbe:c}))}
+                    className="w-7 h-7 rounded-full transition-all hover:scale-110"
+                    style={{background:c,outline:katForm.farbe===c?`2px solid ${c}`:'2px solid transparent',outlineOffset:'2px'}}/>
+                ))}
+              </div>
+            </div>
+            <div className="flex gap-2 mt-2">
+              <button onClick={()=>setKatModal(null)} className="flex-1 py-2.5 rounded-xl text-sm font-semibold border border-black/10 text-slate-700">Abbrechen</button>
+              <button onClick={saveKat} className="flex-1 py-2.5 rounded-xl text-sm font-semibold text-white" style={{background:'#0f172a'}}>Speichern</button>
+            </div>
+          </div>
+        </Modal>
+      )}
+    </div>
+  );
+};
+
+// ─── GutscheineView ───────────────────────────────────────────────────────────
+const GutscheineView = ({ cafe, toast }) => {
+  const [modal, setModal] = useState(false);
+  const [form, setForm] = useState({code:'',betrag:'',custom:false});
+
+  const genCode = () => 'G' + Math.random().toString(36).slice(2,8).toUpperCase();
+
+  const save = async () => {
+    const code = form.custom ? form.code.trim().toUpperCase() : genCode();
+    if (!code || !form.betrag) { toast('Code und Betrag erforderlich','error'); return; }
+    const ref = db.collection('k21-cafe').doc('data');
+    const snap = await ref.get();
+    const data = snap.exists ? snap.data() : DEFAULT_CAFE();
+    const exists = (data.gutscheine||[]).find(g=>g.code.toUpperCase()===code);
+    if (exists) { toast('Code bereits vorhanden','error'); return; }
+    const g = {id:genId(),code,betrag_original:parseFloat(form.betrag),betrag_rest:parseFloat(form.betrag),aktiv:true,erstellt_am:new Date().toISOString()};
+    await ref.set({...data,gutscheine:[...(data.gutscheine||[]),g]});
+    toast('Gutschein erstellt');
+    setModal(false);
+    setForm({code:'',betrag:'',custom:false});
+  };
+
+  const revoke = async (g) => {
+    const ref = db.collection('k21-cafe').doc('data');
+    const snap = await ref.get();
+    const data = snap.exists ? snap.data() : DEFAULT_CAFE();
+    await ref.set({...data,gutscheine:(data.gutscheine||[]).map(x=>x.id===g.id?{...x,aktiv:false}:x)});
+    toast('Gutschein deaktiviert','warn');
+  };
+
+  const sorted = [...(cafe.gutscheine||[])].sort((a,b)=>new Date(b.erstellt_am)-new Date(a.erstellt_am));
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-4">
+        <div className="text-xs text-slate-500">{sorted.length} Gutscheine</div>
+        <button onClick={()=>setModal(true)} className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-semibold text-white" style={{background:'#0f172a'}}>
+          <SI p={IC.plus} size={14}/>Gutschein
+        </button>
+      </div>
+      {sorted.length===0 && <div className="text-center py-12 text-slate-400 text-sm">Keine Gutscheine</div>}
+      <div className="flex flex-col gap-2">
+        {sorted.map(g=>(
+          <div key={g.id} className="glass rounded-2xl px-4 py-3 flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <span className="text-lg">🎟</span>
+              <div>
+                <div className="text-sm font-bold text-slate-800 font-mono">{g.code}</div>
+                <div className="text-xs text-slate-400">{fmtDate(g.erstellt_am)}</div>
+              </div>
+            </div>
+            <div className="flex items-center gap-4">
+              <div className="text-right">
+                <div className="text-sm font-bold text-slate-800">{fmtEur(g.betrag_rest||0)}</div>
+                <div className="text-xs text-slate-400">von {fmtEur(g.betrag_original)}</div>
+              </div>
+              <span className="pill text-xs" style={g.aktiv?{background:'#d1fae5',color:'#065f46'}:{background:'#fee2e2',color:'#991b1b'}}>
+                {g.aktiv?'Aktiv':'Inaktiv'}
+              </span>
+              {g.aktiv && (
+                <button onClick={()=>revoke(g)} className="text-slate-400 hover:text-red-500 transition-all">
+                  <SI p={IC.x} size={14}/>
+                </button>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {modal && (
+        <Modal title="Gutschein erstellen" onClose={()=>setModal(false)}>
+          <div className="flex flex-col gap-3">
+            <div className="flex items-center gap-2">
+              <button onClick={()=>setForm(p=>({...p,custom:!p.custom}))}
+                className={`toggle ${form.custom?'on':''}`}
+                style={{background:form.custom?'#6366f1':'#cbd5e1',flexShrink:0}}/>
+              <span className="text-sm text-slate-600">Eigener Code</span>
+            </div>
+            {form.custom && (
+              <input className={INP} value={form.code} onChange={e=>setForm(p=>({...p,code:e.target.value.toUpperCase()}))} placeholder="z.B. SUMMER2024"/>
+            )}
+            <div>
+              <label className="text-xs font-semibold text-slate-600 mb-1 block">Betrag (€)</label>
+              <input type="number" className={INP} value={form.betrag} onChange={e=>setForm(p=>({...p,betrag:e.target.value}))} step="0.50" min="0" placeholder="10.00"/>
+            </div>
+            <div className="flex gap-2 mt-2">
+              <button onClick={()=>setModal(false)} className="flex-1 py-2.5 rounded-xl text-sm font-semibold border border-black/10 text-slate-700">Abbrechen</button>
+              <button onClick={save} className="flex-1 py-2.5 rounded-xl text-sm font-semibold text-white" style={{background:'#0f172a'}}>Erstellen</button>
+            </div>
+          </div>
+        </Modal>
+      )}
+    </div>
+  );
+};
+
+// ─── WertkartenView ───────────────────────────────────────────────────────────
+const WertkartenView = ({ cafe, toast }) => {
+  const [modal, setModal] = useState(null);
+  const [topupId, setTopupId] = useState(null);
+  const [form, setForm] = useState({code:'',guthaben:''});
+  const [topupBetrag, setTopupBetrag] = useState('');
+
+  const genCode = () => 'W' + Math.random().toString(36).slice(2,8).toUpperCase();
+
+  const save = async () => {
+    const code = form.code.trim().toUpperCase() || genCode();
+    if (!form.guthaben) { toast('Guthaben erforderlich','error'); return; }
+    const ref = db.collection('k21-cafe').doc('data');
+    const snap = await ref.get();
+    const data = snap.exists ? snap.data() : DEFAULT_CAFE();
+    const exists = (data.wertkarten||[]).find(w=>w.code.toUpperCase()===code);
+    if (exists) { toast('Code bereits vorhanden','error'); return; }
+    const w = {id:genId(),code,guthaben:parseFloat(form.guthaben),erstellt_am:new Date().toISOString()};
+    await ref.set({...data,wertkarten:[...(data.wertkarten||[]),w]});
+    toast('Wertkarte erstellt');
+    setModal(null);
+    setForm({code:'',guthaben:''});
+  };
+
+  const topup = async () => {
+    const b = parseFloat(topupBetrag);
+    if (!b||b<=0) { toast('Betrag eingeben','error'); return; }
+    const ref = db.collection('k21-cafe').doc('data');
+    const snap = await ref.get();
+    const data = snap.exists ? snap.data() : DEFAULT_CAFE();
+    await ref.set({...data,wertkarten:(data.wertkarten||[]).map(w=>w.id===topupId?{...w,guthaben:(w.guthaben||0)+b}:w)});
+    toast(`+${fmtEur(b)} aufgeladen`);
+    setTopupId(null);
+    setTopupBetrag('');
+  };
+
+  const sorted = [...(cafe.wertkarten||[])].sort((a,b)=>new Date(b.erstellt_am)-new Date(a.erstellt_am));
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-4">
+        <div className="text-xs text-slate-500">{sorted.length} Wertkarten</div>
+        <button onClick={()=>setModal(true)} className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-semibold text-white" style={{background:'#0f172a'}}>
+          <SI p={IC.plus} size={14}/>Wertkarte
+        </button>
+      </div>
+      {sorted.length===0 && <div className="text-center py-12 text-slate-400 text-sm">Keine Wertkarten</div>}
+      <div className="flex flex-col gap-2">
+        {sorted.map(w=>(
+          <div key={w.id} className="glass rounded-2xl px-4 py-3 flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <span className="text-lg">💳</span>
+              <div>
+                <div className="text-sm font-bold text-slate-800 font-mono">{w.code}</div>
+                <div className="text-xs text-slate-400">{fmtDate(w.erstellt_am)}</div>
+              </div>
+            </div>
+            <div className="flex items-center gap-3">
+              <span className="text-sm font-bold text-slate-800">{fmtEur(w.guthaben||0)}</span>
+              <button onClick={()=>{setTopupId(w.id);setTopupBetrag('');}} className="px-3 py-1 rounded-lg text-xs font-semibold border border-black/10 hover:bg-black/5 transition-all">
+                Aufladen
+              </button>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {modal && (
+        <Modal title="Wertkarte erstellen" onClose={()=>setModal(null)}>
+          <div className="flex flex-col gap-3">
+            <div>
+              <label className="text-xs font-semibold text-slate-600 mb-1 block">Code (leer = auto-generiert)</label>
+              <input className={INP} value={form.code} onChange={e=>setForm(p=>({...p,code:e.target.value.toUpperCase()}))} placeholder="z.B. KARTE001"/>
+            </div>
+            <div>
+              <label className="text-xs font-semibold text-slate-600 mb-1 block">Startguthaben (€)</label>
+              <input type="number" className={INP} value={form.guthaben} onChange={e=>setForm(p=>({...p,guthaben:e.target.value}))} step="5" min="0" placeholder="20.00"/>
+            </div>
+            <div className="flex gap-2 mt-2">
+              <button onClick={()=>setModal(null)} className="flex-1 py-2.5 rounded-xl text-sm font-semibold border border-black/10 text-slate-700">Abbrechen</button>
+              <button onClick={save} className="flex-1 py-2.5 rounded-xl text-sm font-semibold text-white" style={{background:'#0f172a'}}>Erstellen</button>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {topupId && (
+        <Modal title="Guthaben aufladen" onClose={()=>setTopupId(null)}>
+          <div className="flex flex-col gap-3">
+            <div>
+              <label className="text-xs font-semibold text-slate-600 mb-1 block">Betrag (€)</label>
+              <input type="number" className={INP} value={topupBetrag} onChange={e=>setTopupBetrag(e.target.value)} step="5" min="0" placeholder="10.00" autoFocus/>
+            </div>
+            <div className="flex gap-2 mt-2">
+              <button onClick={()=>setTopupId(null)} className="flex-1 py-2.5 rounded-xl text-sm font-semibold border border-black/10 text-slate-700">Abbrechen</button>
+              <button onClick={topup} className="flex-1 py-2.5 rounded-xl text-sm font-semibold text-white" style={{background:'#10b981'}}>Aufladen</button>
+            </div>
+          </div>
+        </Modal>
+      )}
+    </div>
+  );
+};
+
+// ─── FinanzenView ─────────────────────────────────────────────────────────────
+const FinanzenView = ({ cafe }) => {
+  const today = new Date().toLocaleDateString('de-DE');
+
+  const allBestellungen = useMemo(() =>
+    (cafe.bestellungen||[]).filter(b=>b.status!=='storniert'),
+    [cafe.bestellungen]);
+
+  const heuteBestellungen = useMemo(() =>
+    allBestellungen.filter(b=>fmtDate(b.erstellt_am)===today),
+    [allBestellungen, today]);
+
+  const heuteUmsatz = heuteBestellungen.reduce((s,b)=>s+b.gesamt,0);
+
+  const zahlungsBreakdownHeute = useMemo(() => {
+    const map = {};
+    heuteBestellungen.forEach(b=>{
+      (b.zahlung||[]).forEach(z=>{ map[z.art]=(map[z.art]||0)+z.betrag; });
+    });
+    return map;
+  }, [heuteBestellungen]);
+
+  const schichten = useMemo(() =>
+    [...(cafe.schichten||[])].sort((a,b)=>new Date(b.start)-new Date(a.start)).slice(0,20),
+    [cafe.schichten]);
+
+  // Per day chart data (last 7 days)
+  const chartData = useMemo(() => {
+    const days = [];
+    for (let i=6;i>=0;i--) {
+      const d = new Date(); d.setDate(d.getDate()-i);
+      const label = d.toLocaleDateString('de-DE',{weekday:'short',day:'numeric'});
+      const dateStr = d.toLocaleDateString('de-DE');
+      const umsatz = allBestellungen.filter(b=>fmtDate(b.erstellt_am)===dateStr).reduce((s,b)=>s+b.gesamt,0);
+      days.push({label,umsatz});
+    }
+    return days;
+  }, [allBestellungen]);
+  const maxUmsatz = Math.max(...chartData.map(d=>d.umsatz),1);
+
+  return (
+    <div className="flex flex-col gap-6">
+      {/* Today summary */}
+      <div className="grid gap-4" style={{gridTemplateColumns:'repeat(auto-fill,minmax(180px,1fr))'}}>
+        {[
+          ['Heute Umsatz', fmtEur(heuteUmsatz), '#10b981'],
+          ['Heute Bestellungen', heuteBestellungen.length, '#6366f1'],
+          ['Gesamt Umsatz', fmtEur(allBestellungen.reduce((s,b)=>s+b.gesamt,0)), '#0f172a'],
+          ['Gesamt Bestellungen', allBestellungen.length, '#f59e0b'],
+        ].map(([l,v,c])=>(
+          <div key={l} className="glass rounded-2xl p-5 glow">
+            <div className="text-xs text-slate-500 mb-1">{l}</div>
+            <div className="text-2xl font-bold" style={{color:c}}>{v}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Heute Zahlungsarten */}
+      {Object.keys(zahlungsBreakdownHeute).length > 0 && (
+        <div className="glass rounded-2xl p-5 glow">
+          <h3 className="text-sm font-bold text-slate-700 mb-3">Heute — Zahlungsarten</h3>
+          <div className="flex flex-col gap-2">
+            {Object.entries(zahlungsBreakdownHeute).map(([art,betrag])=>(
+              <div key={art} className="flex items-center gap-3">
+                <span className="text-xs text-slate-500 w-20">{art}</span>
+                <div className="flex-1 rounded-full overflow-hidden" style={{height:'8px',background:'#f1f5f9'}}>
+                  <div style={{height:'100%',width:`${(betrag/heuteUmsatz*100).toFixed(1)}%`,background:'#6366f1',borderRadius:'9px',transition:'width .3s'}}/>
+                </div>
+                <span className="text-xs font-semibold text-slate-700 w-16 text-right">{fmtEur(betrag)}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* 7-day chart */}
+      <div className="glass rounded-2xl p-5 glow">
+        <h3 className="text-sm font-bold text-slate-700 mb-4">Umsatz letzte 7 Tage</h3>
+        <div className="flex items-end gap-2" style={{height:'120px'}}>
+          {chartData.map((d,i)=>(
+            <div key={i} className="flex-1 flex flex-col items-center gap-1">
+              <span className="text-xs text-slate-500">{d.umsatz>0?fmtEur(d.umsatz):''}</span>
+              <div style={{width:'100%',height:`${Math.max(4,(d.umsatz/maxUmsatz*80))}px`,background:'#6366f1',borderRadius:'6px 6px 0 0',opacity:d.umsatz===0?0.15:1,transition:'height .3s'}}/>
+              <span className="text-xs text-slate-400" style={{fontSize:'9px'}}>{d.label}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Schichten */}
+      <div className="glass rounded-2xl p-5 glow">
+        <h3 className="text-sm font-bold text-slate-700 mb-3">Schichten</h3>
+        {schichten.length===0 && <div className="text-xs text-slate-400">Keine Schichten</div>}
+        <div className="flex flex-col gap-2">
+          {schichten.map(s=>(
+            <div key={s.id} className="flex items-center justify-between py-2" style={{borderBottom:'1px solid rgba(0,0,0,0.05)'}}>
+              <div>
+                <div className="text-sm font-semibold text-slate-700">{s.kassiererName}</div>
+                <div className="text-xs text-slate-400">{fmtDateTime(s.start)}{s.ende?` – ${fmtTime(s.ende)}`:' (aktiv)'}</div>
+              </div>
+              <div className="text-right">
+                <div className="text-sm font-bold text-slate-800">{fmtEur(s.umsatz||0)}</div>
+                <div className="text-xs text-slate-400">{s.bestellungen_count||0} Bestellungen</div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// ─── PersonenView ─────────────────────────────────────────────────────────────
+const PersonenView = ({ toast }) => {
+  const [users, setUsers] = useState([]);
+  const [modal, setModal] = useState(null);
+  const [form, setForm] = useState({name:'',pin:'',role:'kassierer',farbe:'#8b5cf6'});
+  const [showPin, setShowPin] = useState(false);
+  const set = (k,v) => setForm(p=>({...p,[k]:v}));
+
+  const COLORS = ['#6366f1','#8b5cf6','#ec4899','#ef4444','#f97316','#f59e0b','#10b981','#06b6d4'];
+
+  useEffect(() => {
+    const unsub = db.collection('k21-users').onSnapshot(
+      snap => setUsers(snap.docs.map(d=>({id:d.id,...d.data()}))),
+      () => {}
+    );
+    return () => unsub();
+  }, []);
+
+  const save = async () => {
+    if (!form.name.trim()||!form.pin.trim()) { toast('Name und PIN erforderlich','error'); return; }
+    const data = {name:form.name.trim(),pin:form.pin.trim(),role:form.role,farbe:form.farbe};
+    if (modal==='add') {
+      await db.collection('k21-users').add(data);
+      toast('Person hinzugefügt');
+    } else {
+      await db.collection('k21-users').doc(modal).update(data);
+      toast('Person aktualisiert');
+    }
+    setModal(null);
+  };
+
+  const del = async (id) => {
+    await db.collection('k21-users').doc(id).delete();
+    toast('Person gelöscht','warn');
+  };
+
+  const openAdd = () => { setForm({name:'',pin:'',role:'kassierer',farbe:'#8b5cf6'}); setShowPin(false); setModal('add'); };
+  const openEdit = u => { setForm({name:u.name,pin:u.pin||'',role:u.role||'kassierer',farbe:u.farbe||'#8b5cf6'}); setShowPin(false); setModal(u.id); };
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-4">
+        <div className="text-xs text-slate-500">{users.length} Personen</div>
+        <button onClick={openAdd} className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-semibold text-white" style={{background:'#0f172a'}}>
+          <SI p={IC.plus} size={14}/>Person
+        </button>
+      </div>
+      <div className="flex flex-col gap-2">
+        {users.map(u=>(
+          <div key={u.id} className="glass rounded-2xl px-4 py-3 flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <Avatar name={u.name} color={u.farbe||'#8b5cf6'} size={36}/>
+              <div>
+                <div className="text-sm font-bold text-slate-800">{u.name}</div>
+                <span className="pill text-xs" style={{background:'#f1f5f9',color:'#475569'}}>{ROLE_LABELS[u.role]||u.role}</span>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <button onClick={()=>openEdit(u)} className="text-slate-400 hover:text-slate-700 transition-all"><SI p={IC.edit} size={15}/></button>
+              <button onClick={()=>del(u.id)} className="text-slate-400 hover:text-red-500 transition-all"><SI p={IC.trash} size={15}/></button>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {modal && (
+        <Modal title={modal==='add'?'Person hinzufügen':'Person bearbeiten'} onClose={()=>setModal(null)}>
+          <div className="flex flex-col gap-3">
+            <div>
+              <label className="text-xs font-semibold text-slate-600 mb-1 block">Name</label>
+              <input className={INP} value={form.name} onChange={e=>set('name',e.target.value)} placeholder="Max Mustermann" autoFocus/>
+            </div>
+            <div>
+              <label className="text-xs font-semibold text-slate-600 mb-1 block">PIN</label>
+              <div className="relative">
+                <input type={showPin?'text':'password'} className={INP} value={form.pin} onChange={e=>set('pin',e.target.value)} placeholder="PIN setzen"/>
+                <button type="button" onClick={()=>setShowPin(v=>!v)} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400">
+                  <SI p={showPin?IC.eyeOff:IC.eye} size={14}/>
+                </button>
+              </div>
+            </div>
+            <div>
+              <label className="text-xs font-semibold text-slate-600 mb-1 block">Rolle</label>
+              <select className={INP} value={form.role} onChange={e=>set('role',e.target.value)}>
+                {ROLE_OPTIONS.map(r=><option key={r} value={r}>{ROLE_LABELS[r]}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="text-xs font-semibold text-slate-600 mb-2 block">Farbe</label>
+              <div className="flex flex-wrap gap-2">
+                {COLORS.map(c=>(
+                  <button key={c} onClick={()=>set('farbe',c)}
+                    className="w-7 h-7 rounded-full transition-all hover:scale-110"
+                    style={{background:c,outline:form.farbe===c?`2px solid ${c}`:'2px solid transparent',outlineOffset:'2px'}}/>
+                ))}
+              </div>
+            </div>
+            <div className="flex gap-2 mt-2">
+              <button onClick={()=>setModal(null)} className="flex-1 py-2.5 rounded-xl text-sm font-semibold border border-black/10 text-slate-700">Abbrechen</button>
+              <button onClick={save} className="flex-1 py-2.5 rounded-xl text-sm font-semibold text-white" style={{background:'#0f172a'}}>Speichern</button>
+            </div>
+          </div>
+        </Modal>
+      )}
+    </div>
+  );
+};
+
+// ─── EinstellungenView ────────────────────────────────────────────────────────
+const EinstellungenView = ({ cafe, toast, user }) => {
+  const einst = cafe.einstellungen || {};
+  const [minKarte, setMinKarte] = useState(einst.min_karten_betrag||10);
+  const [newPin, setNewPin]     = useState('');
+  const [showPin, setShowPin]   = useState(false);
+  const [saving, setSaving]     = useState(false);
+
+  const saveEinst = async () => {
+    setSaving(true);
+    const ref = db.collection('k21-cafe').doc('data');
+    const snap = await ref.get();
+    const data = snap.exists ? snap.data() : DEFAULT_CAFE();
+    await ref.set({...data,einstellungen:{...data.einstellungen,min_karten_betrag:parseFloat(minKarte)||10}});
+    toast('Einstellungen gespeichert');
+    setSaving(false);
+  };
+
+  const exportData = async () => {
+    const ref = db.collection('k21-cafe').doc('data');
+    const snap = await ref.get();
+    const data = snap.exists ? snap.data() : {};
+    const blob = new Blob([JSON.stringify(data,null,2)],{type:'application/json'});
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement('a'); a.href=url; a.download=`k21-cafe-export-${Date.now()}.json`; a.click();
+    URL.revokeObjectURL(url);
+    toast('Export erfolgreich');
+  };
+
+  return (
+    <div className="max-w-md flex flex-col gap-4">
+      <div className="glass rounded-2xl p-5 glow">
+        <h3 className="text-sm font-bold text-slate-700 mb-4">Zahlungseinstellungen</h3>
+        <label className="text-xs font-semibold text-slate-600 mb-1 block">Mindestbetrag Kartenzahlung (€)</label>
+        <input type="number" className={INP + ' mb-3'} value={minKarte} onChange={e=>setMinKarte(e.target.value)} step="1" min="0"/>
+        <button onClick={saveEinst} disabled={saving} className="w-full py-2.5 rounded-xl text-sm font-semibold text-white disabled:opacity-40" style={{background:'#0f172a'}}>
+          Speichern
+        </button>
+      </div>
+
+      <div className="glass rounded-2xl p-5 glow">
+        <h3 className="text-sm font-bold text-slate-700 mb-4">Daten exportieren</h3>
+        <button onClick={exportData} className="w-full py-2.5 rounded-xl text-sm font-semibold flex items-center justify-center gap-2 border border-black/10 hover:bg-black/5 transition-all">
+          <SI p={IC.download} size={14}/>JSON Export
+        </button>
+      </div>
+    </div>
+  );
+};
+
+// ─── Nav config ───────────────────────────────────────────────────────────────
+const NAV_ITEMS = [
+  { id:'kasse',        label:'Kasse',       icon:IC.cart,    perm:'kasse' },
+  { id:'bestellungen', label:'Bestellungen',icon:IC.orders,  perm:'bestellungen' },
+  { id:'schicht',      label:'Schicht',     icon:IC.shift,   perm:'schicht' },
+  { id:'produkte',     label:'Produkte',    icon:IC.tag,     perm:'produkte' },
+  { id:'gutscheine',   label:'Gutscheine',  icon:IC.voucher, perm:'gutscheine' },
+  { id:'wertkarten',   label:'Wertkarten',  icon:IC.card,    perm:'wertkarten' },
+  { id:'finanzen',     label:'Finanzen',    icon:IC.chart,   perm:'finanzen' },
+  { id:'einstellungen',label:'Einstellungen',icon:IC.cog,   perm:'einstellungen' },
+  { id:'personen',     label:'Personen',    icon:IC.users,   perm:'personen' },
+];
+
+// ─── App ──────────────────────────────────────────────────────────────────────
+const App = () => {
+  const [user, setUser]           = useState(null);
+  const [cafe, setCafe]           = useState(null);
+  const [syncState, setSyncState] = useState('connecting');
+  const [page, setPage]           = useState('kasse');
+  const [activeSchicht, setActiveSchicht] = useState(null);
+  const [toasts, toast]           = useToast();
+
+  // Firestore listener
+  useEffect(() => {
+    if (!user) return;
+    setSyncState('connecting');
+    const ref = db.collection('k21-cafe').doc('data');
+    const unsub = ref.onSnapshot(
+      snap => {
+        const data = snap.exists ? snap.data() : DEFAULT_CAFE();
+        setCafe({...DEFAULT_CAFE(), ...data});
+        // Find active schicht for this user
+        const aktiv = (data.schichten||[]).find(s=>!s.ende && (user.role==='owner'||s.kassiererId===user.id));
+        setActiveSchicht(aktiv||null);
+        setSyncState('synced');
+      },
+      () => setSyncState('error')
+    );
+    return () => unsub();
+  }, [user]);
+
+  // On login, jump to appropriate default page
+  useEffect(() => {
+    if (!user) return;
+    const firstAllowed = NAV_ITEMS.find(n=>can(user.role,n.perm));
+    if (firstAllowed) setPage(firstAllowed.id);
+  }, [user]);
+
+  if (!user) return <LoginView onLogin={u=>{ setUser(u); }}/>;
+
+  const visibleNav = NAV_ITEMS.filter(n=>can(user.role,n.perm));
+
+  // Make sure current page is accessible
+  const activePage = can(user.role, NAV_ITEMS.find(n=>n.id===page)?.perm) ? page : (visibleNav[0]?.id||'bestellungen');
+
+  const renderPage = () => {
+    if (!cafe) return <div className="flex items-center justify-center h-64 text-slate-400 text-sm">Verbinde mit Datenbank…</div>;
+    if (activePage==='kasse')         return <KasseView cafe={cafe} user={user} toast={toast} activeSchicht={activeSchicht}/>;
+    if (activePage==='bestellungen')  return <BestellungenView cafe={cafe} user={user} toast={toast} activeSchicht={activeSchicht}/>;
+    if (activePage==='schicht')       return <SchichtView cafe={cafe} user={user} toast={toast} activeSchicht={activeSchicht} setActiveSchicht={setActiveSchicht}/>;
+    if (activePage==='produkte')      return <ProdukteView cafe={cafe} user={user} toast={toast}/>;
+    if (activePage==='gutscheine')    return <GutscheineView cafe={cafe} toast={toast}/>;
+    if (activePage==='wertkarten')    return <WertkartenView cafe={cafe} toast={toast}/>;
+    if (activePage==='finanzen')      return <FinanzenView cafe={cafe}/>;
+    if (activePage==='einstellungen') return <EinstellungenView cafe={cafe} toast={toast} user={user}/>;
+    if (activePage==='personen')      return <PersonenView toast={toast}/>;
+    return null;
+  };
+
+  return (
+    <div style={{minHeight:'100vh',display:'flex',flexDirection:'column'}}>
+      {/* Header */}
+      <header style={{background:'#0f172a',position:'sticky',top:0,zIndex:100}}>
+        <div style={{maxWidth:'1400px',margin:'0 auto',padding:'0 20px',height:'56px',display:'flex',alignItems:'center',gap:'16px'}}>
+          <div className="flex items-center gap-2 flex-shrink-0">
+            <div className="w-8 h-8 rounded-xl flex items-center justify-center" style={{background:'rgba(255,255,255,0.1)'}}>
+              <span>☕</span>
+            </div>
+            <span className="text-white font-bold text-sm hidden sm:block">K21 Café</span>
+          </div>
+
+          {/* Nav */}
+          <nav className="flex items-center gap-1 flex-1 overflow-x-auto" style={{scrollbarWidth:'none'}}>
+            {visibleNav.map(n=>(
+              <button key={n.id} onClick={()=>setPage(n.id)}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold flex-shrink-0 transition-all"
+                style={{
+                  background:activePage===n.id?'rgba(255,255,255,0.15)':'transparent',
+                  color:activePage===n.id?'#fff':'rgba(255,255,255,0.55)'
+                }}>
+                <SI p={n.icon} size={13}/>{n.label}
+              </button>
+            ))}
+          </nav>
+
+          {/* Right side */}
+          <div className="flex items-center gap-3 flex-shrink-0">
+            <SyncDot state={syncState}/>
+            {activeSchicht && (
+              <span className="pill text-xs" style={{background:'rgba(16,185,129,0.2)',color:'#34d399'}}>
+                Schicht aktiv
+              </span>
+            )}
+            <div className="flex items-center gap-2">
+              <Avatar name={user.name} color={user.farbe||'#8b5cf6'} size={28}/>
+              <span className="text-white text-xs font-semibold hidden md:block">{user.name}</span>
+            </div>
+            <button onClick={()=>setUser(null)} className="text-white/40 hover:text-white transition-all" title="Abmelden">
+              <SI p={IC.logout} size={15}/>
+            </button>
+          </div>
+        </div>
+      </header>
+
+      {/* Main content */}
+      <main style={{flex:1,maxWidth:'1400px',margin:'0 auto',padding:'20px',width:'100%'}}>
+        <div className="up">
+          {renderPage()}
+        </div>
+      </main>
+
+      <ToastContainer toasts={toasts}/>
+    </div>
+  );
+};
+
+ReactDOM.render(<App/>, document.getElementById('root'));
+</script>
+</body>
+</html>

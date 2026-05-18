@@ -1,0 +1,15 @@
+{
+  "name": "revive-cafe",
+  "version": "1.0.0",
+  "description": "K21 Café – Kassensystem & Team-Verwaltung",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "dependencies": {
+    "@babel/standalone": "^7.25.0",
+    "dotenv": "^16.0.0",
+    "express": "^4.18.0"
+  }
+}
