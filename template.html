@@ -234,7 +234,8 @@ const LoginView = ({ onLogin, profiles }) => {
   const [showPin,  setShowPin]  = useState(false);
   const [err,      setErr]      = useState('');
   const [dropOpen, setDropOpen] = useState(false);
-  const [selProfile, setSelProfile] = useState((profiles&&profiles.length) ? profiles[0].id : 'k21-cafe');
+
+  const defaultProfile = profiles && profiles.length ? profiles[0].id : 'k21-cafe';
 
   useEffect(() => {
     const unsub = db.collection('cafe-users').onSnapshot(
@@ -244,72 +245,55 @@ const LoginView = ({ onLogin, profiles }) => {
     return () => unsub();
   }, []);
 
-  const areaUsers = users.filter(u => getAreaAccess(u, selProfile) !== 'none');
-  const allNames  = [OWNER_NAME, ...areaUsers.map(u=>u.name)];
-  const filtered  = name.trim() ? allNames.filter(n=>n.toLowerCase().includes(name.toLowerCase())) : allNames;
+  const allNames = [OWNER_NAME, ...users.map(u=>u.name)];
+  const filtered = name.trim() ? allNames.filter(n=>n.toLowerCase().includes(name.toLowerCase())) : allNames;
 
   const tryLogin = () => {
     const n = name.trim();
-    if (!n||!pin) { setErr('Bitte Name und PIN eingeben'); return; }
-    if (n.toLowerCase()===OWNER_NAME.toLowerCase()&&pin===OWNER_PIN) {
-      onLogin({id:'__owner__',name:OWNER_NAME,role:'owner'}, selProfile);
+    if (!n || !pin) { setErr('Bitte Name und PIN eingeben'); return; }
+    // Owner: works immediately, no Firebase needed
+    if (n.toLowerCase() === OWNER_NAME.toLowerCase() && pin === OWNER_PIN) {
+      onLogin({id:'__owner__', name:OWNER_NAME, role:'owner'}, defaultProfile);
       return;
     }
-    const u = users.find(x=>x.name.toLowerCase()===n.toLowerCase());
-    if (u&&u.pin===pin) { onLogin(u, selProfile); }
+    // Other users: need Firebase
+    if (!ready) { setErr('Verbindung läuft…'); return; }
+    const u = users.find(x => x.name.toLowerCase() === n.toLowerCase());
+    if (u && String(u.pin) === String(pin)) { onLogin(u, defaultProfile); }
     else { setErr('Name oder PIN nicht korrekt'); setPin(''); }
   };
 
-  const INP_L = "w-full bg-black/5 border border-black/10 rounded-xl px-4 py-3 text-slate-900 placeholder-slate-400 text-sm transition-all";
+  const INP_L = "w-full border rounded-xl px-4 py-3 text-slate-900 placeholder-slate-400 text-sm transition-all";
+  const INP_S = {background:'rgba(0,0,0,0.04)', borderColor:'rgba(0,0,0,0.1)'};
 
   return (
-    <div className="min-h-screen flex items-center justify-center px-4" style={{background:'#f8fafc'}}>
-      <div className="w-full max-w-xs up">
-        {/* Logo + title */}
-        <div className="text-center mb-8">
-          <div className="w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-5 border-2"
-            style={{background:'#000000',borderColor:'#000000'}}>
-            <span style={{fontFamily:'Montserrat,sans-serif',fontWeight:900,fontSize:22,color:'#ffffff',letterSpacing:'-1px'}}>K21</span>
+    <div style={{minHeight:'100vh',display:'flex',alignItems:'center',justifyContent:'center',padding:'16px',background:'#f8fafc'}}>
+      <div style={{width:'100%',maxWidth:'320px'}}>
+        <div style={{textAlign:'center',marginBottom:'32px'}}>
+          <div style={{width:64,height:64,borderRadius:'50%',background:'#000',display:'flex',alignItems:'center',justifyContent:'center',margin:'0 auto 20px'}}>
+            <span style={{fontFamily:'Montserrat,sans-serif',fontWeight:900,fontSize:22,color:'#fff',letterSpacing:'-1px'}}>K21</span>
           </div>
           <h1 style={{fontFamily:'Montserrat,sans-serif',fontWeight:900,fontSize:28,color:'#0f172a',letterSpacing:'-0.04em',margin:0,lineHeight:1}}>K21 Café</h1>
         </div>
 
         <div className="glass rounded-2xl glow" style={{overflow:'visible'}}>
-          <div className="p-5 space-y-3">
+          <div style={{padding:'20px',display:'flex',flexDirection:'column',gap:'12px'}}>
 
-            {/* Area selector – only when multiple profiles */}
-            {profiles && profiles.length > 1 && (
-              <div>
-                <p className="text-xs font-semibold text-slate-400 mb-2 uppercase tracking-wider">Bereich</p>
-                <div className="flex flex-wrap gap-1.5">
-                  {profiles.map(pp=>(
-                    <button key={pp.id} onClick={()=>setSelProfile(pp.id)}
-                      className="px-3 py-1.5 rounded-full text-xs font-bold transition-all"
-                      style={{
-                        background: selProfile===pp.id ? (pp.color||'#8b5cf6') : 'rgba(0,0,0,0.06)',
-                        color:      selProfile===pp.id ? '#fff' : '#64748b',
-                      }}>
-                      {pp.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* Name input with autocomplete dropdown */}
-            <div className="relative">
+            {/* Name with dropdown */}
+            <div style={{position:'relative'}}>
               <input value={name}
                 onChange={e=>{setName(e.target.value);setErr('');setDropOpen(true);}}
                 onFocus={()=>setDropOpen(true)}
                 onBlur={()=>setTimeout(()=>setDropOpen(false),150)}
-                placeholder="Dein Name" className={INP_L} autoComplete="off" autoFocus/>
-              {dropOpen&&filtered.length>0&&(
-                <div className="absolute top-full mt-1 left-0 right-0 glass rounded-xl z-20 glow overflow-hidden">
+                placeholder="Dein Name" className={INP_L} style={INP_S}
+                autoComplete="off" autoFocus/>
+              {dropOpen && filtered.length > 0 && (
+                <div className="glass glow" style={{position:'absolute',top:'calc(100% + 4px)',left:0,right:0,borderRadius:12,zIndex:20,overflow:'hidden'}}>
                   {filtered.slice(0,6).map(n=>(
                     <button key={n} onMouseDown={()=>{setName(n);setDropOpen(false);setErr('');}}
-                      className="w-full text-left px-4 py-2.5 text-sm text-slate-800 hover:bg-black/5 transition-all flex items-center gap-2.5">
-                      <div className="w-6 h-6 rounded-full flex-shrink-0 flex items-center justify-center text-white font-bold"
-                        style={{background:'#000000',fontSize:9}}>
+                      style={{width:'100%',textAlign:'left',padding:'10px 16px',fontSize:14,color:'#0f172a',background:'transparent',border:'none',cursor:'pointer',display:'flex',alignItems:'center',gap:10}}
+                      className="glass-hover">
+                      <div style={{width:24,height:24,borderRadius:'50%',flexShrink:0,display:'flex',alignItems:'center',justifyContent:'center',background:'#000',color:'#fff',fontWeight:700,fontSize:9}}>
                         {n.split(' ').map(w=>w[0]).join('').slice(0,2).toUpperCase()}
                       </div>
                       {n}
@@ -319,25 +303,23 @@ const LoginView = ({ onLogin, profiles }) => {
               )}
             </div>
 
-            {/* PIN input */}
-            <div className="relative">
-              <input type="text" autoComplete="off"
-                style={{WebkitTextSecurity:showPin?'none':'disc'}}
+            {/* PIN */}
+            <div style={{position:'relative'}}>
+              <input type={showPin?'text':'password'} autoComplete="off"
                 value={pin} onChange={e=>{setPin(e.target.value);setErr('');}}
                 onKeyDown={e=>e.key==='Enter'&&tryLogin()}
-                placeholder="PIN" className={INP_L+' pr-10'}/>
+                placeholder="PIN" className={INP_L} style={{...INP_S,paddingRight:40}}/>
               <button type="button" onClick={()=>setShowPin(p=>!p)}
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700 transition-all">
+                style={{position:'absolute',right:12,top:'50%',transform:'translateY(-50%)',background:'none',border:'none',cursor:'pointer',color:'#94a3b8',padding:0}}>
                 <SI p={showPin?IC.eyeOff:IC.eye} size={15}/>
               </button>
             </div>
 
-            {err&&<p className="text-red-500 text-xs">{err}</p>}
+            {err && <p style={{color:'#ef4444',fontSize:12,margin:0}}>{err}</p>}
 
-            <button onClick={tryLogin} disabled={!name.trim()||!pin||!ready}
-              className="w-full py-3 text-sm font-bold text-white disabled:opacity-40 transition-all"
-              style={{background:'#000000',borderRadius:30}}>
-              {ready?'Anmelden':'Verbinde…'}
+            <button onClick={tryLogin} disabled={!name.trim()||!pin}
+              style={{width:'100%',padding:'12px',borderRadius:30,background:'#000',color:'#fff',fontWeight:700,fontSize:14,border:'none',cursor:'pointer',opacity:(!name.trim()||!pin)?0.4:1,transition:'opacity .15s'}}>
+              Anmelden
             </button>
           </div>
         </div>
