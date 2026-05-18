@@ -99,6 +99,33 @@ const padNum   = n => String(n).padStart(3,'0');
 // ─── Constants ────────────────────────────────────────────────────────────────
 const OWNER_NAME = 'Admin';
 const OWNER_PIN  = 'K21ADMIN';
+
+const DEFAULT_CAFE_PROFILES = [
+  { id: 'k21-cafe', label: 'K21 Café', color: '#8b5cf6', grad: 'linear-gradient(135deg,#8b5cf6,#334155)' }
+];
+let CAFE_PROFILES = DEFAULT_CAFE_PROFILES;
+
+const getAreaAccess = (user, areaId) => {
+  if (!user) return 'none';
+  if (user.role === 'owner') return 'full';
+  const acc = user.areaAccess;
+  if (!acc || acc === '__all__') return 'full';
+  return Array.isArray(acc) && acc.includes(areaId) ? 'full' : 'none';
+};
+
+const COLOR_SWATCHES = ['#8b5cf6','#06b6d4','#10b981','#f59e0b','#ef4444','#ec4899','#3b82f6','#f97316'];
+const ColorPicker = ({ value, onChange }) => (
+  <div className="flex gap-2 flex-wrap">
+    {COLOR_SWATCHES.map(c => (
+      <button key={c} onClick={()=>onChange(c)}
+        className="w-7 h-7 rounded-full transition-all flex items-center justify-center"
+        style={{background:c, outline: value===c?`3px solid ${c}`:'3px solid transparent', outlineOffset:2}}>
+        {value===c && <SI p={IC.check} size={12} stroke={3} style={{color:'#fff'}}/>}
+      </button>
+    ))}
+  </div>
+);
+
 const ROLE_LABELS = { owner:'Admin', finanzen:'Finanzen', teamleiter:'Team-Leiter', kassierer:'Kassierer', barista:'Barista' };
 const ROLE_OPTIONS = ['finanzen','teamleiter','kassierer','barista'];
 const INP    = "bg-black/5 border border-black/10 rounded-xl px-3 py-2.5 text-sm text-slate-800 placeholder-slate-500 transition-all w-full";
@@ -197,32 +224,36 @@ const SyncDot = ({ state }) => {
 };
 
 // ─── Login View ───────────────────────────────────────────────────────────────
-const LoginView = ({ onLogin }) => {
+const LoginView = ({ onLogin, profiles }) => {
   const [users, setUsers]    = useState([]);
+  const [selectedProfile, setSelectedProfile] = useState(profiles && profiles.length ? profiles[0].id : null);
   const [selected, setSelected] = useState(null);
   const [pin, setPin]        = useState('');
   const [showPin, setShowPin] = useState(false);
   const [err, setErr]        = useState('');
   const [loading, setLoading] = useState(false);
+  const [step, setStep]      = useState(profiles && profiles.length > 1 ? 'area' : 'user');
 
   useEffect(() => {
-    const unsub = db.collection('k21-users').onSnapshot(
+    const unsub = db.collection('cafe-users').onSnapshot(
       snap => setUsers(snap.docs.map(d=>({id:d.id,...d.data()}))),
       () => {}
     );
     return () => unsub();
   }, []);
 
-  const allUsers = [{ id:'__owner__', name: OWNER_NAME, role:'owner' }, ...users];
+  const ownerUser = { id:'__owner__', name: OWNER_NAME, role:'owner' };
+
+  const filteredUsers = [ownerUser, ...users.filter(u => getAreaAccess(u, selectedProfile) !== 'none')];
 
   const handleLogin = async () => {
     if (!selected) { setErr('Bitte Person auswählen'); return; }
     setLoading(true); setErr('');
     if (selected.id === '__owner__') {
-      if (pin === OWNER_PIN) { onLogin({ ...selected, role:'owner' }); }
+      if (pin === OWNER_PIN) { onLogin({ ...selected, role:'owner' }, selectedProfile); }
       else { setErr('Falscher PIN'); setPin(''); }
     } else {
-      if (pin === selected.pin) { onLogin(selected); }
+      if (pin === selected.pin) { onLogin(selected, selectedProfile); }
       else { setErr('Falscher PIN'); setPin(''); }
     }
     setLoading(false);
@@ -239,11 +270,30 @@ const LoginView = ({ onLogin }) => {
           <h1 className="text-xl font-bold text-slate-800">K21 Café</h1>
           <p className="text-xs text-slate-500 mt-1">Point of Sale System</p>
         </div>
-        {!selected ? (
+        {step === 'area' ? (
           <div>
+            <p className="text-xs font-semibold text-slate-500 mb-3 uppercase tracking-wider">Bereich auswählen</p>
+            <div className="flex flex-col gap-2">
+              {(profiles||[]).map(pp => (
+                <button key={pp.id} onClick={()=>{ setSelectedProfile(pp.id); setStep('user'); }}
+                  className="glass-hover glass rounded-xl px-4 py-3 flex items-center gap-3 transition-all text-left">
+                  <div className="w-9 h-9 rounded-xl flex-shrink-0" style={{background:pp.grad||pp.color||'#8b5cf6'}}/>
+                  <div className="text-sm font-semibold text-slate-800">{pp.label}</div>
+                </button>
+              ))}
+            </div>
+          </div>
+        ) : !selected ? (
+          <div>
+            {profiles && profiles.length > 1 && (
+              <button onClick={()=>{setStep('area');setSelected(null);setPin('');setErr('');}}
+                className="flex items-center gap-1 text-xs text-slate-500 hover:text-slate-700 mb-3 transition-all">
+                <SI p={IC.chevLeft} size={13}/> Bereich ändern
+              </button>
+            )}
             <p className="text-xs font-semibold text-slate-500 mb-3 uppercase tracking-wider">Person auswählen</p>
             <div className="flex flex-col gap-2">
-              {allUsers.map(u => (
+              {filteredUsers.map(u => (
                 <button key={u.id} onClick={()=>{setSelected(u);setErr('');setPin('');}}
                   className="glass-hover glass rounded-xl px-4 py-3 flex items-center gap-3 transition-all text-left">
                   <Avatar name={u.name} color={u.farbe||'#8b5cf6'} size={36}/>
@@ -292,7 +342,7 @@ const LoginView = ({ onLogin }) => {
 };
 
 // ─── KasseView ────────────────────────────────────────────────────────────────
-const KasseView = ({ cafe, user, toast, activeSchicht }) => {
+const KasseView = ({ cafe, user, toast, activeSchicht, profile }) => {
   const [warenkorb, setWarenkorb]   = useState([]);
   const [checkoutOpen, setCheckoutOpen] = useState(false);
   const [aktivKat, setAktivKat]     = useState('alle');
@@ -441,6 +491,7 @@ const KasseView = ({ cafe, user, toast, activeSchicht }) => {
           toast={toast}
           onClose={()=>setCheckoutOpen(false)}
           onSuccess={()=>{ clearCart(); setCheckoutOpen(false); }}
+          profile={profile}
         />
       )}
     </div>
@@ -448,7 +499,7 @@ const KasseView = ({ cafe, user, toast, activeSchicht }) => {
 };
 
 // ─── Checkout Modal ───────────────────────────────────────────────────────────
-const CheckoutModal = ({ warenkorb, gesamt, cafe, schicht, user, toast, onClose, onSuccess }) => {
+const CheckoutModal = ({ warenkorb, gesamt, cafe, schicht, user, toast, onClose, onSuccess, profile }) => {
   const [zahlungen, setZahlungen] = useState([]);
   const [aktuelleArt, setAktuelleArt] = useState('bar');
   const [barBetrag, setBarBetrag]     = useState('');
@@ -507,7 +558,7 @@ const CheckoutModal = ({ warenkorb, gesamt, cafe, schicht, user, toast, onClose,
     if (restBetrag > 0.005) { toast('Noch nicht vollständig bezahlt','error'); return; }
     setSaving(true);
     try {
-      const ref = db.collection('k21-cafe').doc('data');
+      const ref = db.collection(profile||'k21-cafe').doc('data');
       const snap = await ref.get();
       const data = snap.exists ? snap.data() : DEFAULT_CAFE();
 
@@ -701,7 +752,7 @@ const CheckoutModal = ({ warenkorb, gesamt, cafe, schicht, user, toast, onClose,
 };
 
 // ─── BestellungenView ─────────────────────────────────────────────────────────
-const BestellungenView = ({ cafe, user, toast, activeSchicht }) => {
+const BestellungenView = ({ cafe, user, toast, activeSchicht, profile }) => {
   const [filter, setFilter] = useState('aktiv');
 
   const bestellungen = useMemo(() => {
@@ -713,7 +764,7 @@ const BestellungenView = ({ cafe, user, toast, activeSchicht }) => {
   }, [cafe.bestellungen, filter, activeSchicht]);
 
   const markItemFertig = async (bestellung, artikelIdx) => {
-    const ref = db.collection('k21-cafe').doc('data');
+    const ref = db.collection(profile||'k21-cafe').doc('data');
     const snap = await ref.get();
     const data = snap.exists ? snap.data() : DEFAULT_CAFE();
     const updBestellungen = (data.bestellungen||[]).map(b => {
@@ -727,7 +778,7 @@ const BestellungenView = ({ cafe, user, toast, activeSchicht }) => {
 
   const stornieren = async (b) => {
     if (!can(user.role,'stornieren')) return;
-    const ref = db.collection('k21-cafe').doc('data');
+    const ref = db.collection(profile||'k21-cafe').doc('data');
     const snap = await ref.get();
     const data = snap.exists ? snap.data() : DEFAULT_CAFE();
     const updBestellungen = (data.bestellungen||[]).map(x=>x.id===b.id?{...x,status:'storniert'}:x);
@@ -807,7 +858,7 @@ const BestellungenView = ({ cafe, user, toast, activeSchicht }) => {
 };
 
 // ─── SchichtView ──────────────────────────────────────────────────────────────
-const SchichtView = ({ cafe, user, toast, activeSchicht, setActiveSchicht }) => {
+const SchichtView = ({ cafe, user, toast, activeSchicht, setActiveSchicht, profile }) => {
   const [kassenstart, setKassenstart] = useState('');
   const [kassenende, setKassenende]   = useState('');
   const [saving, setSaving]           = useState(false);
@@ -815,7 +866,7 @@ const SchichtView = ({ cafe, user, toast, activeSchicht, setActiveSchicht }) => 
 
   const startSchicht = async () => {
     setSaving(true);
-    const ref = db.collection('k21-cafe').doc('data');
+    const ref = db.collection(profile||'k21-cafe').doc('data');
     const snap = await ref.get();
     const data = snap.exists ? snap.data() : DEFAULT_CAFE();
     const neu = {
@@ -837,7 +888,7 @@ const SchichtView = ({ cafe, user, toast, activeSchicht, setActiveSchicht }) => 
 
   const endeSchicht = async () => {
     setSaving(true);
-    const ref = db.collection('k21-cafe').doc('data');
+    const ref = db.collection(profile||'k21-cafe').doc('data');
     const snap = await ref.get();
     const data = snap.exists ? snap.data() : DEFAULT_CAFE();
     const updated = { ...activeSchicht, ende: new Date().toISOString(), kassenende: parseFloat(kassenende)||0 };
@@ -957,7 +1008,7 @@ const SchichtView = ({ cafe, user, toast, activeSchicht, setActiveSchicht }) => 
 };
 
 // ─── ProdukteView ─────────────────────────────────────────────────────────────
-const ProdukteView = ({ cafe, toast }) => {
+const ProdukteView = ({ cafe, toast, profile }) => {
   const [modal, setModal] = useState(null);
   const [katModal, setKatModal] = useState(null);
   const [form, setForm] = useState({name:'',preis:'',kategorie_id:'',emoji:'',beschreibung:'',aktiv:true});
@@ -968,7 +1019,7 @@ const ProdukteView = ({ cafe, toast }) => {
 
   const saveProdukt = async () => {
     if (!form.name.trim()||!form.preis) { toast('Name und Preis erforderlich','error'); return; }
-    const ref = db.collection('k21-cafe').doc('data');
+    const ref = db.collection(profile||'k21-cafe').doc('data');
     const snap = await ref.get();
     const data = snap.exists ? snap.data() : DEFAULT_CAFE();
     let produkte = data.produkte||[];
@@ -983,14 +1034,14 @@ const ProdukteView = ({ cafe, toast }) => {
   };
 
   const toggleAktiv = async (p) => {
-    const ref = db.collection('k21-cafe').doc('data');
+    const ref = db.collection(profile||'k21-cafe').doc('data');
     const snap = await ref.get();
     const data = snap.exists ? snap.data() : DEFAULT_CAFE();
     await ref.set({...data,produkte:(data.produkte||[]).map(x=>x.id===p.id?{...x,aktiv:!x.aktiv}:x)});
   };
 
   const deleteProdukt = async (id) => {
-    const ref = db.collection('k21-cafe').doc('data');
+    const ref = db.collection(profile||'k21-cafe').doc('data');
     const snap = await ref.get();
     const data = snap.exists ? snap.data() : DEFAULT_CAFE();
     await ref.set({...data,produkte:(data.produkte||[]).filter(p=>p.id!==id)});
@@ -999,7 +1050,7 @@ const ProdukteView = ({ cafe, toast }) => {
 
   const saveKat = async () => {
     if (!katForm.name.trim()) return;
-    const ref = db.collection('k21-cafe').doc('data');
+    const ref = db.collection(profile||'k21-cafe').doc('data');
     const snap = await ref.get();
     const data = snap.exists ? snap.data() : DEFAULT_CAFE();
     let kategorien = data.kategorien||[];
@@ -1014,7 +1065,7 @@ const ProdukteView = ({ cafe, toast }) => {
   };
 
   const deleteKat = async (id) => {
-    const ref = db.collection('k21-cafe').doc('data');
+    const ref = db.collection(profile||'k21-cafe').doc('data');
     const snap = await ref.get();
     const data = snap.exists ? snap.data() : DEFAULT_CAFE();
     await ref.set({...data,kategorien:(data.kategorien||[]).filter(k=>k.id!==id)});
@@ -1158,7 +1209,7 @@ const ProdukteView = ({ cafe, toast }) => {
 };
 
 // ─── GutscheineView ───────────────────────────────────────────────────────────
-const GutscheineView = ({ cafe, toast }) => {
+const GutscheineView = ({ cafe, toast, profile }) => {
   const [modal, setModal] = useState(false);
   const [form, setForm] = useState({code:'',betrag:'',custom:false});
 
@@ -1167,7 +1218,7 @@ const GutscheineView = ({ cafe, toast }) => {
   const save = async () => {
     const code = form.custom ? form.code.trim().toUpperCase() : genCode();
     if (!code || !form.betrag) { toast('Code und Betrag erforderlich','error'); return; }
-    const ref = db.collection('k21-cafe').doc('data');
+    const ref = db.collection(profile||'k21-cafe').doc('data');
     const snap = await ref.get();
     const data = snap.exists ? snap.data() : DEFAULT_CAFE();
     const exists = (data.gutscheine||[]).find(g=>g.code.toUpperCase()===code);
@@ -1180,7 +1231,7 @@ const GutscheineView = ({ cafe, toast }) => {
   };
 
   const revoke = async (g) => {
-    const ref = db.collection('k21-cafe').doc('data');
+    const ref = db.collection(profile||'k21-cafe').doc('data');
     const snap = await ref.get();
     const data = snap.exists ? snap.data() : DEFAULT_CAFE();
     await ref.set({...data,gutscheine:(data.gutscheine||[]).map(x=>x.id===g.id?{...x,aktiv:false}:x)});
@@ -1254,7 +1305,7 @@ const GutscheineView = ({ cafe, toast }) => {
 };
 
 // ─── WertkartenView ───────────────────────────────────────────────────────────
-const WertkartenView = ({ cafe, toast }) => {
+const WertkartenView = ({ cafe, toast, profile }) => {
   const [modal, setModal] = useState(null);
   const [topupId, setTopupId] = useState(null);
   const [form, setForm] = useState({code:'',guthaben:''});
@@ -1265,7 +1316,7 @@ const WertkartenView = ({ cafe, toast }) => {
   const save = async () => {
     const code = form.code.trim().toUpperCase() || genCode();
     if (!form.guthaben) { toast('Guthaben erforderlich','error'); return; }
-    const ref = db.collection('k21-cafe').doc('data');
+    const ref = db.collection(profile||'k21-cafe').doc('data');
     const snap = await ref.get();
     const data = snap.exists ? snap.data() : DEFAULT_CAFE();
     const exists = (data.wertkarten||[]).find(w=>w.code.toUpperCase()===code);
@@ -1280,7 +1331,7 @@ const WertkartenView = ({ cafe, toast }) => {
   const topup = async () => {
     const b = parseFloat(topupBetrag);
     if (!b||b<=0) { toast('Betrag eingeben','error'); return; }
-    const ref = db.collection('k21-cafe').doc('data');
+    const ref = db.collection(profile||'k21-cafe').doc('data');
     const snap = await ref.get();
     const data = snap.exists ? snap.data() : DEFAULT_CAFE();
     await ref.set({...data,wertkarten:(data.wertkarten||[]).map(w=>w.id===topupId?{...w,guthaben:(w.guthaben||0)+b}:w)});
@@ -1470,17 +1521,17 @@ const FinanzenView = ({ cafe }) => {
 };
 
 // ─── PersonenView ─────────────────────────────────────────────────────────────
-const PersonenView = ({ toast }) => {
+const PersonenView = ({ toast, profile }) => {
   const [users, setUsers] = useState([]);
   const [modal, setModal] = useState(null);
-  const [form, setForm] = useState({name:'',pin:'',role:'kassierer',farbe:'#8b5cf6'});
+  const [form, setForm] = useState({name:'',pin:'',role:'kassierer',farbe:'#8b5cf6',areaAccess:'__all__'});
   const [showPin, setShowPin] = useState(false);
   const set = (k,v) => setForm(p=>({...p,[k]:v}));
 
   const COLORS = ['#6366f1','#8b5cf6','#ec4899','#ef4444','#f97316','#f59e0b','#10b981','#06b6d4'];
 
   useEffect(() => {
-    const unsub = db.collection('k21-users').onSnapshot(
+    const unsub = db.collection('cafe-users').onSnapshot(
       snap => setUsers(snap.docs.map(d=>({id:d.id,...d.data()}))),
       () => {}
     );
@@ -1489,24 +1540,24 @@ const PersonenView = ({ toast }) => {
 
   const save = async () => {
     if (!form.name.trim()||!form.pin.trim()) { toast('Name und PIN erforderlich','error'); return; }
-    const data = {name:form.name.trim(),pin:form.pin.trim(),role:form.role,farbe:form.farbe};
+    const data = {name:form.name.trim(),pin:form.pin.trim(),role:form.role,farbe:form.farbe,areaAccess:form.areaAccess||'__all__'};
     if (modal==='add') {
-      await db.collection('k21-users').add(data);
+      await db.collection('cafe-users').add(data);
       toast('Person hinzugefügt');
     } else {
-      await db.collection('k21-users').doc(modal).update(data);
+      await db.collection('cafe-users').doc(modal).update(data);
       toast('Person aktualisiert');
     }
     setModal(null);
   };
 
   const del = async (id) => {
-    await db.collection('k21-users').doc(id).delete();
+    await db.collection('cafe-users').doc(id).delete();
     toast('Person gelöscht','warn');
   };
 
-  const openAdd = () => { setForm({name:'',pin:'',role:'kassierer',farbe:'#8b5cf6'}); setShowPin(false); setModal('add'); };
-  const openEdit = u => { setForm({name:u.name,pin:u.pin||'',role:u.role||'kassierer',farbe:u.farbe||'#8b5cf6'}); setShowPin(false); setModal(u.id); };
+  const openAdd = () => { setForm({name:'',pin:'',role:'kassierer',farbe:'#8b5cf6',areaAccess:'__all__'}); setShowPin(false); setModal('add'); };
+  const openEdit = u => { setForm({name:u.name,pin:u.pin||'',role:u.role||'kassierer',farbe:u.farbe||'#8b5cf6',areaAccess:u.areaAccess||'__all__'}); setShowPin(false); setModal(u.id); };
 
   return (
     <div>
@@ -1524,6 +1575,16 @@ const PersonenView = ({ toast }) => {
               <div>
                 <div className="text-sm font-bold text-slate-800">{u.name}</div>
                 <span className="pill text-xs" style={{background:'#f1f5f9',color:'#475569'}}>{ROLE_LABELS[u.role]||u.role}</span>
+                {u.areaAccess && u.areaAccess !== '__all__' && Array.isArray(u.areaAccess) && (
+                  <div className="flex flex-wrap gap-1 mt-1">
+                    {u.areaAccess.map(aid => {
+                      const pp = CAFE_PROFILES.find(p=>p.id===aid);
+                      return pp ? (
+                        <span key={aid} className="pill text-xs" style={{background:(pp.color||'#8b5cf6')+'22',color:pp.color||'#8b5cf6'}}>{pp.label}</span>
+                      ) : null;
+                    })}
+                  </div>
+                )}
               </div>
             </div>
             <div className="flex items-center gap-2">
@@ -1566,6 +1627,28 @@ const PersonenView = ({ toast }) => {
                 ))}
               </div>
             </div>
+            <div>
+              <label className="text-xs font-semibold text-slate-600 mb-2 block">Bereichs-Zugriff</label>
+              <div className="flex flex-col gap-1.5">
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input type="checkbox" checked={form.areaAccess==='__all__' || !form.areaAccess}
+                    onChange={e=>setForm(f=>({...f, areaAccess: e.target.checked ? '__all__' : []}))}
+                    className="rounded"/>
+                  <span className="text-sm text-slate-700">Alle Bereiche</span>
+                </label>
+                {form.areaAccess !== '__all__' && form.areaAccess && CAFE_PROFILES.map(pp => (
+                  <label key={pp.id} className="flex items-center gap-2 cursor-pointer ml-4">
+                    <input type="checkbox"
+                      checked={Array.isArray(form.areaAccess) && form.areaAccess.includes(pp.id)}
+                      onChange={e=>setForm(f=>({...f, areaAccess: e.target.checked
+                        ? [...(Array.isArray(f.areaAccess)?f.areaAccess:[]), pp.id]
+                        : (Array.isArray(f.areaAccess)?f.areaAccess:[]).filter(x=>x!==pp.id)
+                      }))}/>
+                    <span className="text-sm text-slate-700">{pp.label}</span>
+                  </label>
+                ))}
+              </div>
+            </div>
             <div className="flex gap-2 mt-2">
               <button onClick={()=>setModal(null)} className="flex-1 py-2.5 rounded-xl text-sm font-semibold border border-black/10 text-slate-700">Abbrechen</button>
               <button onClick={save} className="flex-1 py-2.5 rounded-xl text-sm font-semibold text-white" style={{background:'#0f172a'}}>Speichern</button>
@@ -1578,7 +1661,7 @@ const PersonenView = ({ toast }) => {
 };
 
 // ─── EinstellungenView ────────────────────────────────────────────────────────
-const EinstellungenView = ({ cafe, toast, user }) => {
+const EinstellungenView = ({ cafe, toast, user, profile }) => {
   const einst = cafe.einstellungen || {};
   const [minKarte, setMinKarte] = useState(einst.min_karten_betrag||10);
   const [newPin, setNewPin]     = useState('');
@@ -1587,7 +1670,7 @@ const EinstellungenView = ({ cafe, toast, user }) => {
 
   const saveEinst = async () => {
     setSaving(true);
-    const ref = db.collection('k21-cafe').doc('data');
+    const ref = db.collection(profile||'k21-cafe').doc('data');
     const snap = await ref.get();
     const data = snap.exists ? snap.data() : DEFAULT_CAFE();
     await ref.set({...data,einstellungen:{...data.einstellungen,min_karten_betrag:parseFloat(minKarte)||10}});
@@ -1596,7 +1679,7 @@ const EinstellungenView = ({ cafe, toast, user }) => {
   };
 
   const exportData = async () => {
-    const ref = db.collection('k21-cafe').doc('data');
+    const ref = db.collection(profile||'k21-cafe').doc('data');
     const snap = await ref.get();
     const data = snap.exists ? snap.data() : {};
     const blob = new Blob([JSON.stringify(data,null,2)],{type:'application/json'});
@@ -1648,12 +1731,25 @@ const App = () => {
   const [page, setPage]           = useState('kasse');
   const [activeSchicht, setActiveSchicht] = useState(null);
   const [toasts, toast]           = useToast();
+  const [profiles, setProfiles]   = useState(DEFAULT_CAFE_PROFILES);
+  const [profile, setProfile]     = useState(DEFAULT_CAFE_PROFILES[0].id);
+  const [headerEdit, setHeaderEdit]           = useState(null);
+  const [headerEditName, setHeaderEditName]   = useState('');
+  const [headerEditColor, setHeaderEditColor] = useState('#8b5cf6');
+
+  // Load profiles on mount
+  useEffect(() => {
+    db.collection('config').doc('cafe-profiles').get().then(snap => {
+      const d = snap.data()?.data;
+      if (d && d.length) { setProfiles(d); CAFE_PROFILES = d; setProfile(d[0].id); }
+    }).catch(()=>{});
+  }, []);
 
   // Firestore listener
   useEffect(() => {
     if (!user) return;
     setSyncState('connecting');
-    const ref = db.collection('k21-cafe').doc('data');
+    const ref = db.collection(profile).doc('data');
     const unsub = ref.onSnapshot(
       snap => {
         const data = snap.exists ? snap.data() : DEFAULT_CAFE();
@@ -1666,7 +1762,7 @@ const App = () => {
       () => setSyncState('error')
     );
     return () => unsub();
-  }, [user]);
+  }, [user, profile]);
 
   // On login, jump to appropriate default page
   useEffect(() => {
@@ -1675,7 +1771,22 @@ const App = () => {
     if (firstAllowed) setPage(firstAllowed.id);
   }, [user]);
 
-  if (!user) return <LoginView onLogin={u=>{ setUser(u); }}/>;
+  const saveHeaderEdit = () => {
+    if (!headerEditName.trim()) return;
+    let np;
+    if (headerEdit === 'new') {
+      const id = headerEditName.trim().toLowerCase().replace(/\s+/g,'-').replace(/[^a-z0-9-]/g,'') + '-' + Math.random().toString(36).slice(2,5);
+      np = [...profiles, {id, label:headerEditName.trim(), color:headerEditColor, grad:`linear-gradient(135deg,${headerEditColor},#334155)`}];
+    } else {
+      np = profiles.map(p => p.id===headerEdit ? {...p, label:headerEditName.trim(), color:headerEditColor, grad:`linear-gradient(135deg,${headerEditColor},#334155)`} : p);
+    }
+    setProfiles(np); CAFE_PROFILES = np;
+    db.collection('config').doc('cafe-profiles').set({data: np}).catch(()=>{});
+    setHeaderEdit(null);
+    toast(headerEdit==='new' ? 'Bereich erstellt ✓' : 'Bereich umbenannt ✓');
+  };
+
+  if (!user) return <LoginView onLogin={(u, pid) => { setUser(u); if (pid) setProfile(pid); }} profiles={profiles}/>;
 
   const visibleNav = NAV_ITEMS.filter(n=>can(user.role,n.perm));
 
@@ -1684,15 +1795,15 @@ const App = () => {
 
   const renderPage = () => {
     if (!cafe) return <div className="flex items-center justify-center h-64 text-slate-400 text-sm">Verbinde mit Datenbank…</div>;
-    if (activePage==='kasse')         return <KasseView cafe={cafe} user={user} toast={toast} activeSchicht={activeSchicht}/>;
-    if (activePage==='bestellungen')  return <BestellungenView cafe={cafe} user={user} toast={toast} activeSchicht={activeSchicht}/>;
-    if (activePage==='schicht')       return <SchichtView cafe={cafe} user={user} toast={toast} activeSchicht={activeSchicht} setActiveSchicht={setActiveSchicht}/>;
-    if (activePage==='produkte')      return <ProdukteView cafe={cafe} user={user} toast={toast}/>;
-    if (activePage==='gutscheine')    return <GutscheineView cafe={cafe} toast={toast}/>;
-    if (activePage==='wertkarten')    return <WertkartenView cafe={cafe} toast={toast}/>;
+    if (activePage==='kasse')         return <KasseView cafe={cafe} user={user} toast={toast} activeSchicht={activeSchicht} profile={profile}/>;
+    if (activePage==='bestellungen')  return <BestellungenView cafe={cafe} user={user} toast={toast} activeSchicht={activeSchicht} profile={profile}/>;
+    if (activePage==='schicht')       return <SchichtView cafe={cafe} user={user} toast={toast} activeSchicht={activeSchicht} setActiveSchicht={setActiveSchicht} profile={profile}/>;
+    if (activePage==='produkte')      return <ProdukteView cafe={cafe} user={user} toast={toast} profile={profile}/>;
+    if (activePage==='gutscheine')    return <GutscheineView cafe={cafe} toast={toast} profile={profile}/>;
+    if (activePage==='wertkarten')    return <WertkartenView cafe={cafe} toast={toast} profile={profile}/>;
     if (activePage==='finanzen')      return <FinanzenView cafe={cafe}/>;
-    if (activePage==='einstellungen') return <EinstellungenView cafe={cafe} toast={toast} user={user}/>;
-    if (activePage==='personen')      return <PersonenView toast={toast}/>;
+    if (activePage==='einstellungen') return <EinstellungenView cafe={cafe} toast={toast} user={user} profile={profile}/>;
+    if (activePage==='personen')      return <PersonenView toast={toast} profile={profile}/>;
     return null;
   };
 
@@ -1706,6 +1817,40 @@ const App = () => {
               <span>☕</span>
             </div>
             <span className="text-white font-bold text-sm hidden sm:block">K21 Café</span>
+          </div>
+
+          {/* Profile switcher pills */}
+          <div className="flex gap-1 mx-auto items-center flex-wrap justify-center">
+            {profiles.map(pp => (
+              <div key={pp.id} className="relative flex items-center gap-0.5">
+                <button onClick={()=>setProfile(pp.id)}
+                  className="px-3 py-1.5 text-xs font-bold transition-all"
+                  style={{
+                    borderRadius:30,
+                    background: profile===pp.id ? '#ffffff' : 'transparent',
+                    color: profile===pp.id ? '#0f172a' : 'rgba(255,255,255,0.4)',
+                    border: profile===pp.id ? '1px solid transparent' : '1px solid rgba(255,255,255,0.12)',
+                  }}>
+                  {pp.label}
+                </button>
+                {user?.role==='owner' && (
+                  <button onClick={()=>{setHeaderEdit(pp.id);setHeaderEditName(pp.label);setHeaderEditColor(pp.color||'#8b5cf6');}}
+                    title="Bereich bearbeiten"
+                    className="w-5 h-5 flex items-center justify-center rounded-full opacity-40 hover:opacity-100 transition-all"
+                    style={{color:'rgba(255,255,255,0.7)'}}>
+                    <SI p={IC.edit} size={12}/>
+                  </button>
+                )}
+              </div>
+            ))}
+            {user?.role==='owner' && (
+              <button onClick={()=>{setHeaderEdit('new');setHeaderEditName('');setHeaderEditColor('#8b5cf6');}}
+                title="Neuer Bereich"
+                className="w-7 h-7 flex items-center justify-center rounded-full opacity-50 hover:opacity-100 transition-all"
+                style={{color:'rgba(255,255,255,0.7)',border:'1px dashed rgba(255,255,255,0.3)'}}>
+                <SI p={IC.plus} size={13}/>
+              </button>
+            )}
           </div>
 
           {/* Nav */}
@@ -1747,6 +1892,40 @@ const App = () => {
           {renderPage()}
         </div>
       </main>
+
+      {headerEdit && (
+        <Modal title={headerEdit==='new'?'Neuer Bereich':'Bereich bearbeiten'} onClose={()=>setHeaderEdit(null)}>
+          <div className="space-y-4">
+            <div>
+              <label className="text-slate-400 text-xs block mb-1.5">Name</label>
+              <input autoFocus value={headerEditName} onChange={e=>setHeaderEditName(e.target.value)}
+                placeholder="Bereich-Name…" className={INP}
+                onKeyDown={e=>e.key==='Enter'&&saveHeaderEdit()}/>
+            </div>
+            <div>
+              <label className="text-slate-400 text-xs block mb-1.5">Farbe</label>
+              <ColorPicker value={headerEditColor} onChange={setHeaderEditColor}/>
+            </div>
+            <div className="flex gap-2 pt-1">
+              <button onClick={saveHeaderEdit} className="flex-1 bg-slate-900 hover:bg-slate-700 text-white font-bold py-2.5 text-sm rounded-xl transition-all">Speichern</button>
+              <button onClick={()=>setHeaderEdit(null)} className="px-4 py-2.5 bg-black/5 text-slate-400 text-sm rounded-xl transition-all">Abbrechen</button>
+            </div>
+            {headerEdit!=='new' && profiles.length > 1 && (
+              <button onClick={()=>{
+                if (!window.confirm('Bereich wirklich löschen?')) return;
+                const np = profiles.filter(p=>p.id!==headerEdit);
+                setProfiles(np); CAFE_PROFILES=np;
+                db.collection('config').doc('cafe-profiles').set({data:np}).catch(()=>{});
+                if (profile===headerEdit) setProfile(np[0].id);
+                setHeaderEdit(null);
+                toast('Bereich gelöscht ✓');
+              }} className="w-full py-2 text-red-400 hover:text-red-600 text-xs font-medium transition-all text-center">
+                Bereich löschen
+              </button>
+            )}
+          </div>
+        </Modal>
+      )}
 
       <ToastContainer toasts={toasts}/>
     </div>
