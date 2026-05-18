@@ -382,7 +382,7 @@ const KasseView = ({ cafe, user, toast, activeSchicht, profile }) => {
   const clearCart = () => setWarenkorb([]);
 
   return (
-    <div style={{display:'flex',gap:'16px',height:'calc(100vh - 64px)',overflow:'hidden'}}>
+    <div style={{display:'flex',gap:'16px',height:'calc(100vh - 120px)',overflow:'hidden'}}>
       {/* Left: product grid */}
       <div style={{flex:'1 1 0',overflowY:'auto',paddingRight:'4px'}}>
         {/* Category tabs */}
@@ -1810,8 +1810,10 @@ const App = () => {
   return (
     <div style={{minHeight:'100vh',display:'flex',flexDirection:'column'}}>
       {/* Header */}
-      <header style={{background:'#0f172a',position:'sticky',top:0,zIndex:100}}>
+      <header style={{background:'#000000',position:'sticky',top:0,zIndex:100}}>
+        {/* Row 1: Logo + Area pills + User info */}
         <div style={{maxWidth:'1400px',margin:'0 auto',padding:'0 20px',height:'56px',display:'flex',alignItems:'center',gap:'16px'}}>
+          {/* Logo */}
           <div className="flex items-center gap-2 flex-shrink-0">
             <div className="w-8 h-8 rounded-xl flex items-center justify-center" style={{background:'rgba(255,255,255,0.1)'}}>
               <span>☕</span>
@@ -1819,7 +1821,7 @@ const App = () => {
             <span className="text-white font-bold text-sm hidden sm:block">K21 Café</span>
           </div>
 
-          {/* Profile switcher pills */}
+          {/* Area pills – centered */}
           <div className="flex gap-1 mx-auto items-center flex-wrap justify-center">
             {profiles.map(pp => (
               <div key={pp.id} className="relative flex items-center gap-0.5">
@@ -1828,7 +1830,7 @@ const App = () => {
                   style={{
                     borderRadius:30,
                     background: profile===pp.id ? '#ffffff' : 'transparent',
-                    color: profile===pp.id ? '#0f172a' : 'rgba(255,255,255,0.4)',
+                    color: profile===pp.id ? '#000000' : 'rgba(255,255,255,0.4)',
                     border: profile===pp.id ? '1px solid transparent' : '1px solid rgba(255,255,255,0.12)',
                   }}>
                   {pp.label}
@@ -1853,26 +1855,12 @@ const App = () => {
             )}
           </div>
 
-          {/* Nav */}
-          <nav className="flex items-center gap-1 flex-1 overflow-x-auto" style={{scrollbarWidth:'none'}}>
-            {visibleNav.map(n=>(
-              <button key={n.id} onClick={()=>setPage(n.id)}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold flex-shrink-0 transition-all"
-                style={{
-                  background:activePage===n.id?'rgba(255,255,255,0.15)':'transparent',
-                  color:activePage===n.id?'#fff':'rgba(255,255,255,0.55)'
-                }}>
-                <SI p={n.icon} size={13}/>{n.label}
-              </button>
-            ))}
-          </nav>
-
-          {/* Right side */}
+          {/* Right side: sync + schicht badge + avatar + logout */}
           <div className="flex items-center gap-3 flex-shrink-0">
             <SyncDot state={syncState}/>
             {activeSchicht && (
-              <span className="pill text-xs" style={{background:'rgba(16,185,129,0.2)',color:'#34d399'}}>
-                Schicht aktiv
+              <span className="pill text-xs hidden sm:inline-flex" style={{background:'rgba(16,185,129,0.2)',color:'#34d399'}}>
+                ● Schicht aktiv
               </span>
             )}
             <div className="flex items-center gap-2">
@@ -1882,6 +1870,22 @@ const App = () => {
             <button onClick={()=>setUser(null)} className="text-white/40 hover:text-white transition-all" title="Abmelden">
               <SI p={IC.logout} size={15}/>
             </button>
+          </div>
+        </div>
+
+        {/* Row 2: Nav tabs */}
+        <div style={{borderTop:'1px solid rgba(255,255,255,0.06)'}}>
+          <div style={{maxWidth:'1400px',margin:'0 auto',padding:'0 16px',height:'44px',display:'flex',alignItems:'center',justifyContent:'center',gap:'2px',overflowX:'auto',scrollbarWidth:'none'}}>
+            {visibleNav.map(n=>(
+              <button key={n.id} onClick={()=>setPage(n.id)}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold flex-shrink-0 transition-all"
+                style={{
+                  background:activePage===n.id?'rgba(255,255,255,0.15)':'transparent',
+                  color:activePage===n.id?'#fff':'rgba(255,255,255,0.45)'
+                }}>
+                <SI p={n.icon} size={13}/>{n.label}
+              </button>
+            ))}
           </div>
         </div>
       </header>
