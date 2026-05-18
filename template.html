@@ -9,7 +9,6 @@
   <script src="https://cdn.tailwindcss.com"></script>
   <script crossorigin src="https://unpkg.com/react@18.2.0/umd/react.production.min.js"></script>
   <script crossorigin src="https://unpkg.com/react-dom@18.2.0/umd/react-dom.production.min.js"></script>
-  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
   <script>
@@ -126,16 +125,18 @@ const ColorPicker = ({ value, onChange }) => (
   </div>
 );
 
-const ROLE_LABELS = { owner:'Admin', finanzen:'Finanzen', teamleiter:'Team-Leiter', kassierer:'Kassierer', barista:'Barista' };
-const ROLE_OPTIONS = ['finanzen','teamleiter','kassierer','barista'];
+const ROLE_LABELS = { owner:'Admin', admin:'Admin', finanzen:'Finanzen', teamleiter:'Team-Leiter', kassierer:'Kassierer', barista:'Barista' };
+const ROLE_OPTIONS = ['admin','finanzen','teamleiter','kassierer','barista'];
 const INP    = "bg-black/5 border border-black/10 rounded-xl px-3 py-2.5 text-sm text-slate-800 placeholder-slate-500 transition-all w-full";
 const INP_SM = "bg-black/5 border border-black/10 rounded-lg px-2.5 py-1.5 text-xs text-slate-800 placeholder-slate-500 transition-all";
 
 const DEFAULT_CAFE = () => ({
   produkte: [],
   kategorien: [],
-  gutscheine: [],
-  wertkarten: [],
+  zahlungsmethoden: [
+    {id:'bar',   name:'Bar',   emoji:'💵', aktiv:true, fixed:true},
+    {id:'karte', name:'Karte', emoji:'💳', aktiv:true, fixed:true},
+  ],
   schichten: [],
   bestellungen: [],
   einstellungen: { min_karten_betrag: 10, waehrung: 'EUR' }
@@ -145,16 +146,15 @@ const DEFAULT_CAFE = () => ({
 const can = (role, action) => {
   if (!role) return false;
   const map = {
-    kasse:        ['owner','teamleiter','kassierer'],
-    bestellungen: ['owner','teamleiter','kassierer','barista','finanzen'],
-    schicht:      ['owner','teamleiter','kassierer'],
-    produkte:     ['owner','teamleiter'],
-    gutscheine:   ['owner','finanzen','teamleiter'],
-    wertkarten:   ['owner','finanzen','teamleiter'],
-    finanzen:     ['owner','finanzen'],
-    einstellungen:['owner'],
-    personen:     ['owner','teamleiter'],
-    stornieren:   ['owner','teamleiter'],
+    kasse:             ['teamleiter','kassierer'],
+    bestellungen:      ['teamleiter','kassierer','barista','finanzen'],
+    schicht:           ['teamleiter','kassierer'],
+    produkte:          ['owner','admin','teamleiter'],
+    zahlungsmethoden:  ['owner','admin'],
+    finanzen:          ['owner','admin','finanzen','teamleiter'],
+    einstellungen:     ['owner','admin'],
+    personen:          ['owner','admin','teamleiter'],
+    stornieren:        ['owner','admin','teamleiter'],
   };
   return (map[action]||[]).includes(role);
 };
@@ -503,57 +503,28 @@ const KasseView = ({ cafe, user, toast, activeSchicht, profile }) => {
 
 // ─── Checkout Modal ───────────────────────────────────────────────────────────
 const CheckoutModal = ({ warenkorb, gesamt, cafe, schicht, user, toast, onClose, onSuccess, profile }) => {
+  const methoden = useMemo(() => (cafe.zahlungsmethoden||[]).filter(m=>m.aktiv!==false), [cafe.zahlungsmethoden]);
   const [zahlungen, setZahlungen] = useState([]);
-  const [aktuelleArt, setAktuelleArt] = useState('bar');
-  const [barBetrag, setBarBetrag]     = useState('');
-  const [gutscheinCode, setGutscheinCode] = useState('');
-  const [gutscheinBetrag, setGutscheinBetrag] = useState('');
-  const [wertkarteCode, setWertkarteCode]     = useState('');
-  const [wertkarteBetrag, setWertkarteBetrag] = useState('');
-  const [validatedGutschein, setValidatedGutschein] = useState(null);
-  const [validatedWertkarte, setValidatedWertkarte] = useState(null);
+  const [aktuelleId, setAktuelleId] = useState(methoden[0]?.id||'bar');
+  const [betrag, setBetrag] = useState('');
   const [saving, setSaving] = useState(false);
 
-  const bezahlt  = zahlungen.reduce((s,z)=>s+z.betrag,0);
-  const restBetrag = Math.max(0, gesamt - bezahlt);
-  const wechsel   = aktuelleArt==='bar' && parseFloat(barBetrag)>restBetrag ? parseFloat(barBetrag)-restBetrag : 0;
+  const bezahlt   = zahlungen.reduce((s,z)=>s+z.betrag,0);
+  const restBetrag= Math.max(0, gesamt - bezahlt);
   const minKarte  = (cafe.einstellungen||{}).min_karten_betrag || 10;
-
-  const valGutschein = () => {
-    const g = cafe.gutscheine.find(x=>x.code.toUpperCase()===gutscheinCode.toUpperCase() && x.aktiv!==false && (x.betrag_rest||0)>=0.01);
-    if (!g) { toast('Gutschein nicht gefunden oder ungültig','error'); return; }
-    setValidatedGutschein(g);
-    setGutscheinBetrag(fmt2(Math.min(g.betrag_rest, restBetrag)));
-  };
-
-  const valWertkarte = () => {
-    const w = cafe.wertkarten.find(x=>x.code.toUpperCase()===wertkarteCode.toUpperCase() && (x.guthaben||0)>=0.01);
-    if (!w) { toast('Wertkarte nicht gefunden oder kein Guthaben','error'); return; }
-    setValidatedWertkarte(w);
-    setWertkarteBetrag(fmt2(Math.min(w.guthaben, restBetrag)));
-  };
+  const methode   = methoden.find(m=>m.id===aktuelleId);
+  const wechsel   = aktuelleId==='bar' && parseFloat(betrag)>restBetrag ? parseFloat(betrag)-restBetrag : 0;
 
   const addZahlung = () => {
-    if (aktuelleArt==='bar') {
-      const b = Math.min(parseFloat(barBetrag)||0, restBetrag + wechsel);
-      if (b<=0) { toast('Betrag eingeben','error'); return; }
-      setZahlungen(p=>[...p,{art:'bar',betrag:Math.min(parseFloat(barBetrag)||0, restBetrag)}]);
-      setBarBetrag('');
-    } else if (aktuelleArt==='karte') {
-      if (restBetrag < minKarte) { toast(`Mindestbetrag per Karte: ${fmtEur(minKarte)}`,'warn'); return; }
-      setZahlungen(p=>[...p,{art:'karte',betrag:restBetrag}]);
-    } else if (aktuelleArt==='gutschein') {
-      if (!validatedGutschein) { toast('Gutschein validieren','error'); return; }
-      const b = Math.min(parseFloat(gutscheinBetrag)||0, validatedGutschein.betrag_rest, restBetrag);
-      if (b<=0) { toast('Betrag eingeben','error'); return; }
-      setZahlungen(p=>[...p,{art:'gutschein',betrag:b,code:validatedGutschein.code,gutschein_id:validatedGutschein.id}]);
-      setGutscheinCode(''); setGutscheinBetrag(''); setValidatedGutschein(null);
-    } else if (aktuelleArt==='wertkarte') {
-      if (!validatedWertkarte) { toast('Wertkarte validieren','error'); return; }
-      const b = Math.min(parseFloat(wertkarteBetrag)||0, validatedWertkarte.guthaben, restBetrag);
-      if (b<=0) { toast('Betrag eingeben','error'); return; }
-      setZahlungen(p=>[...p,{art:'wertkarte',betrag:b,code:validatedWertkarte.code,wertkarte_id:validatedWertkarte.id}]);
-      setWertkarteCode(''); setWertkarteBetrag(''); setValidatedWertkarte(null);
+    if (aktuelleId==='karte') {
+      if (restBetrag < minKarte) { toast(`Mindestbetrag: ${fmtEur(minKarte)}`,'warn'); return; }
+      setZahlungen(p=>[...p,{art:aktuelleId, name:methode?.name||'Karte', betrag:restBetrag}]);
+    } else {
+      const b = Math.min(parseFloat(betrag)||0, aktuelleId==='bar' ? parseFloat(betrag)||0 : restBetrag);
+      const actual = Math.min(b, restBetrag);
+      if (actual<=0) { toast('Betrag eingeben','error'); return; }
+      setZahlungen(p=>[...p,{art:aktuelleId, name:methode?.name||aktuelleId, betrag:actual}]);
+      setBetrag('');
     }
   };
 
@@ -564,67 +535,28 @@ const CheckoutModal = ({ warenkorb, gesamt, cafe, schicht, user, toast, onClose,
       const ref = db.collection(profile||'k21-cafe').doc('data');
       const snap = await ref.get();
       const data = snap.exists ? snap.data() : DEFAULT_CAFE();
-
-      // Count orders in shift for numbering
       const schichtBestellungen = (data.bestellungen||[]).filter(b=>b.schicht_id===schicht.id);
       const nummer = padNum(schichtBestellungen.length + 1);
-
       const neueBestellung = {
-        id: genId(),
-        schicht_id: schicht.id,
-        nummer,
-        artikel: warenkorb.map(i=>({...i, fertig:false})),
-        gesamt,
-        zahlung: zahlungen,
-        status: 'offen',
+        id: genId(), schicht_id: schicht.id, nummer,
+        artikel: warenkorb.map(i=>({...i,fertig:false})),
+        gesamt, zahlung: zahlungen, status:'offen',
         erstellt_am: new Date().toISOString(),
-        kassiererId: user.id,
-        kassiererName: user.name,
+        kassiererId: user.id, kassiererName: user.name,
       };
-
-      // Update gutscheine
-      const updGutscheine = (data.gutscheine||[]).map(g => {
-        const z = zahlungen.find(z=>z.art==='gutschein'&&z.gutschein_id===g.id);
-        if (!z) return g;
-        const rest = (g.betrag_rest||0) - z.betrag;
-        return { ...g, betrag_rest: Math.max(0, rest), aktiv: rest > 0.005 };
-      });
-
-      // Update wertkarten
-      const updWertkarten = (data.wertkarten||[]).map(w => {
-        const z = zahlungen.find(z=>z.art==='wertkarte'&&z.wertkarte_id===w.id);
-        if (!z) return w;
-        return { ...w, guthaben: Math.max(0, (w.guthaben||0) - z.betrag) };
-      });
-
-      // Update schicht
-      const updSchichten = (data.schichten||[]).map(s => {
-        if (s.id!==schicht.id) return s;
-        return { ...s, bestellungen_count:(s.bestellungen_count||0)+1, umsatz:(s.umsatz||0)+gesamt };
-      });
-
-      await ref.set({
-        ...data,
-        gutscheine: updGutscheine,
-        wertkarten: updWertkarten,
-        schichten: updSchichten,
-        bestellungen: [...(data.bestellungen||[]), neueBestellung],
-      });
-
+      const updSchichten = (data.schichten||[]).map(s=>
+        s.id!==schicht.id ? s : {...s, bestellungen_count:(s.bestellungen_count||0)+1, umsatz:(s.umsatz||0)+gesamt}
+      );
+      await ref.set({...data, schichten:updSchichten, bestellungen:[...(data.bestellungen||[]),neueBestellung]});
       toast(`Bestellung #${nummer} gespeichert ✓`);
       onSuccess();
-    } catch(e) {
-      toast('Fehler beim Speichern: ' + e.message, 'error');
-    }
+    } catch(e) { toast('Fehler: '+e.message,'error'); }
     setSaving(false);
   };
-
-  const artLabels = {bar:'Bar',karte:'Karte',gutschein:'Gutschein',wertkarte:'Wertkarte'};
 
   return (
     <Modal title="Kasse" onClose={onClose} wide>
       <div className="flex flex-col gap-4">
-        {/* Items summary */}
         <div className="rounded-xl p-3" style={{background:'#f8fafc'}}>
           {warenkorb.map(i=>(
             <div key={i.produkt_id} className="flex justify-between text-sm py-0.5">
@@ -637,13 +569,12 @@ const CheckoutModal = ({ warenkorb, gesamt, cafe, schicht, user, toast, onClose,
           </div>
         </div>
 
-        {/* Paid so far */}
         {zahlungen.length > 0 && (
           <div>
             <p className="text-xs font-semibold text-slate-500 mb-2">Zahlungen</p>
             {zahlungen.map((z,i)=>(
               <div key={i} className="flex items-center justify-between text-xs py-1">
-                <span className="text-slate-600">{artLabels[z.art]}{z.code?` (${z.code})`:''}</span>
+                <span className="text-slate-600">{z.name}</span>
                 <div className="flex items-center gap-2">
                   <span className="font-semibold">{fmtEur(z.betrag)}</span>
                   <button onClick={()=>setZahlungen(p=>p.filter((_,j)=>j!==i))} className="text-slate-300 hover:text-red-400"><SI p={IC.x} size={11}/></button>
@@ -653,7 +584,6 @@ const CheckoutModal = ({ warenkorb, gesamt, cafe, schicht, user, toast, onClose,
           </div>
         )}
 
-        {/* Rest */}
         <div className="flex justify-between items-center">
           <span className="text-sm font-semibold text-slate-600">Noch offen</span>
           <span className={`text-lg font-bold ${restBetrag<=0.005?'text-green-600':'text-slate-900'}`}>
@@ -663,81 +593,33 @@ const CheckoutModal = ({ warenkorb, gesamt, cafe, schicht, user, toast, onClose,
 
         {restBetrag > 0.005 && (
           <div>
-            <p className="text-xs font-semibold text-slate-500 mb-2">Zahlungsart hinzufügen</p>
+            <p className="text-xs font-semibold text-slate-500 mb-2">Zahlungsart</p>
             <div className="flex flex-wrap gap-2 mb-3">
-              {['bar','karte','gutschein','wertkarte'].map(a=>(
-                <button key={a} onClick={()=>setAktuelleArt(a)}
-                  className={`pill transition-all ${aktuelleArt===a?'text-white':'text-slate-600 bg-white border border-black/10'}`}
-                  style={aktuelleArt===a?{background:'#0f172a'}:{}}>
-                  {artLabels[a]}
+              {methoden.map(m=>(
+                <button key={m.id} onClick={()=>{setAktuelleId(m.id);setBetrag('');}}
+                  className={`pill transition-all ${aktuelleId===m.id?'text-white':'text-slate-600 bg-white border border-black/10'}`}
+                  style={aktuelleId===m.id?{background:'#0f172a'}:{}}>
+                  {m.emoji} {m.name}
                 </button>
               ))}
             </div>
 
-            {aktuelleArt==='bar' && (
-              <div className="flex gap-2">
-                <input type="number" className={INP} placeholder={`Betrag (mind. ${fmtEur(restBetrag)})`}
-                  value={barBetrag} onChange={e=>setBarBetrag(e.target.value)} step="0.01" min="0"/>
-                <button onClick={addZahlung} className="px-4 py-2.5 rounded-xl text-sm font-semibold text-white flex-shrink-0"
-                  style={{background:'#0f172a'}}>+</button>
-              </div>
-            )}
-            {aktuelleArt==='bar' && parseFloat(barBetrag) > restBetrag && (
-              <p className="text-xs text-green-600 mt-1 font-semibold">Wechselgeld: {fmtEur(parseFloat(barBetrag)-restBetrag)}</p>
-            )}
-
-            {aktuelleArt==='karte' && (
-              <div>
-                {restBetrag < minKarte
-                  ? <p className="text-xs text-amber-600">Mindestbetrag für Kartenzahlung: {fmtEur(minKarte)}</p>
-                  : <button onClick={addZahlung} className="w-full py-2.5 rounded-xl text-sm font-semibold text-white"
-                      style={{background:'#0f172a'}}>
-                      Karte: {fmtEur(restBetrag)} hinzufügen
-                    </button>
-                }
-              </div>
-            )}
-
-            {aktuelleArt==='gutschein' && (
-              <div className="flex flex-col gap-2">
+            {aktuelleId==='karte' ? (
+              restBetrag < minKarte
+                ? <p className="text-xs text-amber-600">Mindestbetrag: {fmtEur(minKarte)}</p>
+                : <button onClick={addZahlung} className="w-full py-2.5 rounded-xl text-sm font-semibold text-white" style={{background:'#0f172a'}}>
+                    💳 Karte: {fmtEur(restBetrag)}
+                  </button>
+            ) : (
+              <div className="flex flex-col gap-1">
                 <div className="flex gap-2">
-                  <input type="text" className={INP} placeholder="Gutschein-Code"
-                    value={gutscheinCode} onChange={e=>{setGutscheinCode(e.target.value.toUpperCase());setValidatedGutschein(null);}}/>
-                  <button onClick={valGutschein} className="px-4 rounded-xl text-sm font-semibold text-white flex-shrink-0"
-                    style={{background:'#6366f1'}}>Prüfen</button>
+                  <input type="number" className={INP} placeholder={`Betrag (${fmtEur(restBetrag)})`}
+                    value={betrag} onChange={e=>setBetrag(e.target.value)} step="0.01" min="0"
+                    onKeyDown={e=>e.key==='Enter'&&addZahlung()}/>
+                  <button onClick={addZahlung} className="px-4 py-2.5 rounded-xl text-sm font-semibold text-white flex-shrink-0" style={{background:'#0f172a'}}>+</button>
                 </div>
-                {validatedGutschein && (
-                  <div>
-                    <p className="text-xs text-green-600 mb-2">Guthaben: {fmtEur(validatedGutschein.betrag_rest)}</p>
-                    <div className="flex gap-2">
-                      <input type="number" className={INP} placeholder="Betrag"
-                        value={gutscheinBetrag} onChange={e=>setGutscheinBetrag(e.target.value)} step="0.01"/>
-                      <button onClick={addZahlung} className="px-4 rounded-xl text-sm font-semibold text-white flex-shrink-0"
-                        style={{background:'#0f172a'}}>+</button>
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
-
-            {aktuelleArt==='wertkarte' && (
-              <div className="flex flex-col gap-2">
-                <div className="flex gap-2">
-                  <input type="text" className={INP} placeholder="Wertkarten-Code"
-                    value={wertkarteCode} onChange={e=>{setWertkarteCode(e.target.value.toUpperCase());setValidatedWertkarte(null);}}/>
-                  <button onClick={valWertkarte} className="px-4 rounded-xl text-sm font-semibold text-white flex-shrink-0"
-                    style={{background:'#6366f1'}}>Prüfen</button>
-                </div>
-                {validatedWertkarte && (
-                  <div>
-                    <p className="text-xs text-green-600 mb-2">Guthaben: {fmtEur(validatedWertkarte.guthaben)}</p>
-                    <div className="flex gap-2">
-                      <input type="number" className={INP} placeholder="Betrag"
-                        value={wertkarteBetrag} onChange={e=>setWertkarteBetrag(e.target.value)} step="0.01"/>
-                      <button onClick={addZahlung} className="px-4 rounded-xl text-sm font-semibold text-white flex-shrink-0"
-                        style={{background:'#0f172a'}}>+</button>
-                    </div>
-                  </div>
+                {aktuelleId==='bar' && parseFloat(betrag)>restBetrag && (
+                  <p className="text-xs text-green-600 font-semibold">Wechselgeld: {fmtEur(wechsel)}</p>
                 )}
               </div>
             )}
@@ -1211,198 +1093,103 @@ const ProdukteView = ({ cafe, toast, profile }) => {
   );
 };
 
-// ─── GutscheineView ───────────────────────────────────────────────────────────
-const GutscheineView = ({ cafe, toast, profile }) => {
-  const [modal, setModal] = useState(false);
-  const [form, setForm] = useState({code:'',betrag:'',custom:false});
-
-  const genCode = () => 'G' + Math.random().toString(36).slice(2,8).toUpperCase();
-
-  const save = async () => {
-    const code = form.custom ? form.code.trim().toUpperCase() : genCode();
-    if (!code || !form.betrag) { toast('Code und Betrag erforderlich','error'); return; }
-    const ref = db.collection(profile||'k21-cafe').doc('data');
-    const snap = await ref.get();
-    const data = snap.exists ? snap.data() : DEFAULT_CAFE();
-    const exists = (data.gutscheine||[]).find(g=>g.code.toUpperCase()===code);
-    if (exists) { toast('Code bereits vorhanden','error'); return; }
-    const g = {id:genId(),code,betrag_original:parseFloat(form.betrag),betrag_rest:parseFloat(form.betrag),aktiv:true,erstellt_am:new Date().toISOString()};
-    await ref.set({...data,gutscheine:[...(data.gutscheine||[]),g]});
-    toast('Gutschein erstellt');
-    setModal(false);
-    setForm({code:'',betrag:'',custom:false});
-  };
-
-  const revoke = async (g) => {
-    const ref = db.collection(profile||'k21-cafe').doc('data');
-    const snap = await ref.get();
-    const data = snap.exists ? snap.data() : DEFAULT_CAFE();
-    await ref.set({...data,gutscheine:(data.gutscheine||[]).map(x=>x.id===g.id?{...x,aktiv:false}:x)});
-    toast('Gutschein deaktiviert','warn');
-  };
-
-  const sorted = [...(cafe.gutscheine||[])].sort((a,b)=>new Date(b.erstellt_am)-new Date(a.erstellt_am));
-
-  return (
-    <div>
-      <div className="flex items-center justify-between mb-4">
-        <div className="text-xs text-slate-500">{sorted.length} Gutscheine</div>
-        <button onClick={()=>setModal(true)} className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-semibold text-white" style={{background:'#0f172a'}}>
-          <SI p={IC.plus} size={14}/>Gutschein
-        </button>
-      </div>
-      {sorted.length===0 && <div className="text-center py-12 text-slate-400 text-sm">Keine Gutscheine</div>}
-      <div className="flex flex-col gap-2">
-        {sorted.map(g=>(
-          <div key={g.id} className="glass rounded-2xl px-4 py-3 flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <span className="text-lg">🎟</span>
-              <div>
-                <div className="text-sm font-bold text-slate-800 font-mono">{g.code}</div>
-                <div className="text-xs text-slate-400">{fmtDate(g.erstellt_am)}</div>
-              </div>
-            </div>
-            <div className="flex items-center gap-4">
-              <div className="text-right">
-                <div className="text-sm font-bold text-slate-800">{fmtEur(g.betrag_rest||0)}</div>
-                <div className="text-xs text-slate-400">von {fmtEur(g.betrag_original)}</div>
-              </div>
-              <span className="pill text-xs" style={g.aktiv?{background:'#d1fae5',color:'#065f46'}:{background:'#fee2e2',color:'#991b1b'}}>
-                {g.aktiv?'Aktiv':'Inaktiv'}
-              </span>
-              {g.aktiv && (
-                <button onClick={()=>revoke(g)} className="text-slate-400 hover:text-red-500 transition-all">
-                  <SI p={IC.x} size={14}/>
-                </button>
-              )}
-            </div>
-          </div>
-        ))}
-      </div>
-
-      {modal && (
-        <Modal title="Gutschein erstellen" onClose={()=>setModal(false)}>
-          <div className="flex flex-col gap-3">
-            <div className="flex items-center gap-2">
-              <button onClick={()=>setForm(p=>({...p,custom:!p.custom}))}
-                className={`toggle ${form.custom?'on':''}`}
-                style={{background:form.custom?'#6366f1':'#cbd5e1',flexShrink:0}}/>
-              <span className="text-sm text-slate-600">Eigener Code</span>
-            </div>
-            {form.custom && (
-              <input className={INP} value={form.code} onChange={e=>setForm(p=>({...p,code:e.target.value.toUpperCase()}))} placeholder="z.B. SUMMER2024"/>
-            )}
-            <div>
-              <label className="text-xs font-semibold text-slate-600 mb-1 block">Betrag (€)</label>
-              <input type="number" className={INP} value={form.betrag} onChange={e=>setForm(p=>({...p,betrag:e.target.value}))} step="0.50" min="0" placeholder="10.00"/>
-            </div>
-            <div className="flex gap-2 mt-2">
-              <button onClick={()=>setModal(false)} className="flex-1 py-2.5 rounded-xl text-sm font-semibold border border-black/10 text-slate-700">Abbrechen</button>
-              <button onClick={save} className="flex-1 py-2.5 rounded-xl text-sm font-semibold text-white" style={{background:'#0f172a'}}>Erstellen</button>
-            </div>
-          </div>
-        </Modal>
-      )}
-    </div>
-  );
-};
-
-// ─── WertkartenView ───────────────────────────────────────────────────────────
-const WertkartenView = ({ cafe, toast, profile }) => {
+// ─── ZahlungsMethodenView ─────────────────────────────────────────────────────
+const ZahlungsMethodenView = ({ cafe, toast, profile }) => {
   const [modal, setModal] = useState(null);
-  const [topupId, setTopupId] = useState(null);
-  const [form, setForm] = useState({code:'',guthaben:''});
-  const [topupBetrag, setTopupBetrag] = useState('');
-
-  const genCode = () => 'W' + Math.random().toString(36).slice(2,8).toUpperCase();
+  const [form, setForm] = useState({name:'',emoji:'💰'});
+  const EMOJIS = ['💵','💳','📱','🎁','🏷','💰','🔄','📋','🧾','🪙'];
+  const methoden = cafe.zahlungsmethoden || [];
 
   const save = async () => {
-    const code = form.code.trim().toUpperCase() || genCode();
-    if (!form.guthaben) { toast('Guthaben erforderlich','error'); return; }
+    if (!form.name.trim()) { toast('Name erforderlich','error'); return; }
     const ref = db.collection(profile||'k21-cafe').doc('data');
     const snap = await ref.get();
     const data = snap.exists ? snap.data() : DEFAULT_CAFE();
-    const exists = (data.wertkarten||[]).find(w=>w.code.toUpperCase()===code);
-    if (exists) { toast('Code bereits vorhanden','error'); return; }
-    const w = {id:genId(),code,guthaben:parseFloat(form.guthaben),erstellt_am:new Date().toISOString()};
-    await ref.set({...data,wertkarten:[...(data.wertkarten||[]),w]});
-    toast('Wertkarte erstellt');
+    let zm = data.zahlungsmethoden || [];
+    if (modal==='add') {
+      zm = [...zm, {id:genId(), name:form.name.trim(), emoji:form.emoji, aktiv:true, fixed:false}];
+    } else {
+      zm = zm.map(m=>m.id===modal ? {...m, name:form.name.trim(), emoji:form.emoji} : m);
+    }
+    await ref.set({...data, zahlungsmethoden:zm});
+    toast(modal==='add'?'Zahlungsmethode hinzugefügt':'Aktualisiert');
     setModal(null);
-    setForm({code:'',guthaben:''});
   };
 
-  const topup = async () => {
-    const b = parseFloat(topupBetrag);
-    if (!b||b<=0) { toast('Betrag eingeben','error'); return; }
+  const toggleAktiv = async (m) => {
+    if (m.fixed) return;
     const ref = db.collection(profile||'k21-cafe').doc('data');
     const snap = await ref.get();
     const data = snap.exists ? snap.data() : DEFAULT_CAFE();
-    await ref.set({...data,wertkarten:(data.wertkarten||[]).map(w=>w.id===topupId?{...w,guthaben:(w.guthaben||0)+b}:w)});
-    toast(`+${fmtEur(b)} aufgeladen`);
-    setTopupId(null);
-    setTopupBetrag('');
+    await ref.set({...data, zahlungsmethoden:(data.zahlungsmethoden||[]).map(x=>x.id===m.id?{...x,aktiv:!x.aktiv}:x)});
   };
 
-  const sorted = [...(cafe.wertkarten||[])].sort((a,b)=>new Date(b.erstellt_am)-new Date(a.erstellt_am));
+  const del = async (id) => {
+    const ref = db.collection(profile||'k21-cafe').doc('data');
+    const snap = await ref.get();
+    const data = snap.exists ? snap.data() : DEFAULT_CAFE();
+    await ref.set({...data, zahlungsmethoden:(data.zahlungsmethoden||[]).filter(x=>x.id!==id)});
+    toast('Gelöscht','warn');
+  };
 
   return (
     <div>
       <div className="flex items-center justify-between mb-4">
-        <div className="text-xs text-slate-500">{sorted.length} Wertkarten</div>
-        <button onClick={()=>setModal(true)} className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-semibold text-white" style={{background:'#0f172a'}}>
-          <SI p={IC.plus} size={14}/>Wertkarte
+        <p className="text-xs text-slate-500">{methoden.length} Zahlungsmethoden</p>
+        <button onClick={()=>{setForm({name:'',emoji:'💰'});setModal('add');}}
+          className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-semibold text-white" style={{background:'#0f172a'}}>
+          <SI p={IC.plus} size={14}/>Methode
         </button>
       </div>
-      {sorted.length===0 && <div className="text-center py-12 text-slate-400 text-sm">Keine Wertkarten</div>}
       <div className="flex flex-col gap-2">
-        {sorted.map(w=>(
-          <div key={w.id} className="glass rounded-2xl px-4 py-3 flex items-center justify-between">
+        {methoden.map(m=>(
+          <div key={m.id} className={`glass rounded-2xl px-4 py-3 flex items-center justify-between ${!m.aktiv?'opacity-50':''}`}>
             <div className="flex items-center gap-3">
-              <span className="text-lg">💳</span>
+              <span className="text-xl">{m.emoji}</span>
               <div>
-                <div className="text-sm font-bold text-slate-800 font-mono">{w.code}</div>
-                <div className="text-xs text-slate-400">{fmtDate(w.erstellt_am)}</div>
+                <div className="text-sm font-bold text-slate-800">{m.name}</div>
+                {m.fixed && <span className="pill text-xs" style={{background:'#f1f5f9',color:'#64748b'}}>Standard</span>}
               </div>
             </div>
-            <div className="flex items-center gap-3">
-              <span className="text-sm font-bold text-slate-800">{fmtEur(w.guthaben||0)}</span>
-              <button onClick={()=>{setTopupId(w.id);setTopupBetrag('');}} className="px-3 py-1 rounded-lg text-xs font-semibold border border-black/10 hover:bg-black/5 transition-all">
-                Aufladen
-              </button>
+            <div className="flex items-center gap-2">
+              {m.fixed
+                ? <span className="pill text-xs" style={{background:'#d1fae5',color:'#065f46'}}>Immer aktiv</span>
+                : <>
+                    <button onClick={()=>toggleAktiv(m)}
+                      className={`toggle ${m.aktiv?'on':''}`}
+                      style={{background:m.aktiv?'#10b981':'#cbd5e1'}}/>
+                    <button onClick={()=>{setForm({name:m.name,emoji:m.emoji});setModal(m.id);}}
+                      className="text-slate-400 hover:text-slate-700 transition-all"><SI p={IC.edit} size={15}/></button>
+                    <button onClick={()=>del(m.id)}
+                      className="text-slate-400 hover:text-red-500 transition-all"><SI p={IC.trash} size={15}/></button>
+                  </>
+              }
             </div>
           </div>
         ))}
       </div>
 
       {modal && (
-        <Modal title="Wertkarte erstellen" onClose={()=>setModal(null)}>
+        <Modal title={modal==='add'?'Zahlungsmethode hinzufügen':'Methode bearbeiten'} onClose={()=>setModal(null)}>
           <div className="flex flex-col gap-3">
             <div>
-              <label className="text-xs font-semibold text-slate-600 mb-1 block">Code (leer = auto-generiert)</label>
-              <input className={INP} value={form.code} onChange={e=>setForm(p=>({...p,code:e.target.value.toUpperCase()}))} placeholder="z.B. KARTE001"/>
+              <label className="text-xs font-semibold text-slate-600 mb-2 block">Emoji</label>
+              <div className="flex gap-2 flex-wrap">
+                {EMOJIS.map(e=>(
+                  <button key={e} onClick={()=>setForm(p=>({...p,emoji:e}))}
+                    className={`text-xl w-10 h-10 rounded-xl flex items-center justify-center transition-all ${form.emoji===e?'bg-slate-200':'hover:bg-slate-100'}`}>
+                    {e}
+                  </button>
+                ))}
+              </div>
             </div>
             <div>
-              <label className="text-xs font-semibold text-slate-600 mb-1 block">Startguthaben (€)</label>
-              <input type="number" className={INP} value={form.guthaben} onChange={e=>setForm(p=>({...p,guthaben:e.target.value}))} step="5" min="0" placeholder="20.00"/>
+              <label className="text-xs font-semibold text-slate-600 mb-1 block">Name</label>
+              <input className={INP} value={form.name} onChange={e=>setForm(p=>({...p,name:e.target.value}))} placeholder="z.B. PayPal" autoFocus/>
             </div>
             <div className="flex gap-2 mt-2">
               <button onClick={()=>setModal(null)} className="flex-1 py-2.5 rounded-xl text-sm font-semibold border border-black/10 text-slate-700">Abbrechen</button>
-              <button onClick={save} className="flex-1 py-2.5 rounded-xl text-sm font-semibold text-white" style={{background:'#0f172a'}}>Erstellen</button>
-            </div>
-          </div>
-        </Modal>
-      )}
-
-      {topupId && (
-        <Modal title="Guthaben aufladen" onClose={()=>setTopupId(null)}>
-          <div className="flex flex-col gap-3">
-            <div>
-              <label className="text-xs font-semibold text-slate-600 mb-1 block">Betrag (€)</label>
-              <input type="number" className={INP} value={topupBetrag} onChange={e=>setTopupBetrag(e.target.value)} step="5" min="0" placeholder="10.00" autoFocus/>
-            </div>
-            <div className="flex gap-2 mt-2">
-              <button onClick={()=>setTopupId(null)} className="flex-1 py-2.5 rounded-xl text-sm font-semibold border border-black/10 text-slate-700">Abbrechen</button>
-              <button onClick={topup} className="flex-1 py-2.5 rounded-xl text-sm font-semibold text-white" style={{background:'#10b981'}}>Aufladen</button>
+              <button onClick={save} className="flex-1 py-2.5 rounded-xl text-sm font-semibold text-white" style={{background:'#0f172a'}}>Speichern</button>
             </div>
           </div>
         </Modal>
@@ -1412,72 +1199,158 @@ const WertkartenView = ({ cafe, toast, profile }) => {
 };
 
 // ─── FinanzenView ─────────────────────────────────────────────────────────────
-const FinanzenView = ({ cafe }) => {
-  const today = new Date().toLocaleDateString('de-DE');
+const FinanzenView = ({ cafe, toast, profile }) => {
+  const [periode, setPeriode] = useState('heute');
+  const [minKarte, setMinKarte] = useState((cafe.einstellungen||{}).min_karten_betrag||10);
+  const [savingEinst, setSavingEinst] = useState(false);
 
   const allBestellungen = useMemo(() =>
-    (cafe.bestellungen||[]).filter(b=>b.status!=='storniert'),
-    [cafe.bestellungen]);
+    (cafe.bestellungen||[]).filter(b=>b.status!=='storniert'), [cafe.bestellungen]);
 
-  const heuteBestellungen = useMemo(() =>
-    allBestellungen.filter(b=>fmtDate(b.erstellt_am)===today),
-    [allBestellungen, today]);
+  const getRange = useCallback((p) => {
+    const now = new Date();
+    const today = new Date(now.getFullYear(),now.getMonth(),now.getDate());
+    if (p==='heute') return [today, new Date(today.getTime()+86400000)];
+    if (p==='woche') {
+      const mon = new Date(today); mon.setDate(today.getDate()-(today.getDay()||7)+1);
+      return [mon, new Date(mon.getTime()+7*86400000)];
+    }
+    if (p==='monat') return [new Date(now.getFullYear(),now.getMonth(),1), new Date(now.getFullYear(),now.getMonth()+1,1)];
+    return [new Date(0), new Date(now.getTime()+86400000)];
+  }, []);
 
-  const heuteUmsatz = heuteBestellungen.reduce((s,b)=>s+b.gesamt,0);
+  const filterBy = useCallback((list,[s,e]) =>
+    list.filter(b=>{ const d=new Date(b.erstellt_am); return d>=s&&d<e; }), []);
 
-  const zahlungsBreakdownHeute = useMemo(() => {
-    const map = {};
-    heuteBestellungen.forEach(b=>{
-      (b.zahlung||[]).forEach(z=>{ map[z.art]=(map[z.art]||0)+z.betrag; });
-    });
-    return map;
-  }, [heuteBestellungen]);
+  const [rs,re] = useMemo(()=>getRange(periode),[periode,getRange]);
+  const [ps,pe] = useMemo(()=>{ const [s,e]=getRange(periode); const dur=e-s; return [new Date(s-dur),new Date(s)]; },[periode,getRange]);
 
-  const schichten = useMemo(() =>
-    [...(cafe.schichten||[])].sort((a,b)=>new Date(b.start)-new Date(a.start)).slice(0,20),
-    [cafe.schichten]);
+  const periodeB = useMemo(()=>filterBy(allBestellungen,[rs,re]),[allBestellungen,rs,re,filterBy]);
+  const prevB    = useMemo(()=>filterBy(allBestellungen,[ps,pe]),[allBestellungen,ps,pe,filterBy]);
 
-  // Per day chart data (last 7 days)
-  const chartData = useMemo(() => {
-    const days = [];
-    for (let i=6;i>=0;i--) {
-      const d = new Date(); d.setDate(d.getDate()-i);
-      const label = d.toLocaleDateString('de-DE',{weekday:'short',day:'numeric'});
-      const dateStr = d.toLocaleDateString('de-DE');
-      const umsatz = allBestellungen.filter(b=>fmtDate(b.erstellt_am)===dateStr).reduce((s,b)=>s+b.gesamt,0);
-      days.push({label,umsatz});
+  const periodeUmsatz = periodeB.reduce((s,b)=>s+b.gesamt,0);
+  const prevUmsatz    = prevB.reduce((s,b)=>s+b.gesamt,0);
+  const umsatzDelta   = prevUmsatz>0 ? (periodeUmsatz-prevUmsatz)/prevUmsatz*100 : null;
+  const countDelta    = prevB.length>0 ? periodeB.length-prevB.length : null;
+
+  const zahlungsBreakdown = useMemo(()=>{
+    const map={};
+    periodeB.forEach(b=>(b.zahlung||[]).forEach(z=>{map[z.name||z.art]=(map[z.name||z.art]||0)+z.betrag;}));
+    return Object.entries(map).sort((a,b)=>b[1]-a[1]);
+  },[periodeB]);
+
+  const katBreakdown = useMemo(()=>{
+    const map={};
+    periodeB.forEach(b=>(b.artikel||[]).forEach(a=>{
+      const kat=(cafe.kategorien||[]).find(k=>k.id===a.kategorie_id);
+      const key=kat?.name||'Sonstige';
+      map[key]=(map[key]||0)+a.preis*a.menge;
+    }));
+    return Object.entries(map).sort((a,b)=>b[1]-a[1]);
+  },[periodeB,cafe.kategorien]);
+
+  const chartData = useMemo(()=>{
+    const days=[];
+    for(let i=6;i>=0;i--){
+      const d=new Date(); d.setDate(d.getDate()-i);
+      const s=new Date(d.getFullYear(),d.getMonth(),d.getDate());
+      const e=new Date(s.getTime()+86400000);
+      days.push({label:d.toLocaleDateString('de-DE',{weekday:'short',day:'numeric'}),umsatz:filterBy(allBestellungen,[s,e]).reduce((s,b)=>s+b.gesamt,0)});
     }
     return days;
-  }, [allBestellungen]);
+  },[allBestellungen,filterBy]);
   const maxUmsatz = Math.max(...chartData.map(d=>d.umsatz),1);
 
+  const schichten = useMemo(()=>[...(cafe.schichten||[])].sort((a,b)=>new Date(b.start)-new Date(a.start)).slice(0,20),[cafe.schichten]);
+
+  const periodeLabels = {heute:'Heute',woche:'Diese Woche',monat:'Dieser Monat',alles:'Gesamt'};
+  const prevLabels    = {heute:'Gestern',woche:'Letzte Woche',monat:'Letzter Monat',alles:''};
+
+  const saveMinKarte = async () => {
+    setSavingEinst(true);
+    const ref = db.collection(profile||'k21-cafe').doc('data');
+    const snap = await ref.get();
+    const data = snap.exists ? snap.data() : DEFAULT_CAFE();
+    await ref.set({...data, einstellungen:{...(data.einstellungen||{}), min_karten_betrag:parseFloat(minKarte)||10}});
+    toast('Gespeichert');
+    setSavingEinst(false);
+  };
+
+  const exportData = async () => {
+    const ref = db.collection(profile||'k21-cafe').doc('data');
+    const snap = await ref.get();
+    const blob = new Blob([JSON.stringify(snap.exists?snap.data():{},null,2)],{type:'application/json'});
+    const a = document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=`k21-cafe-${Date.now()}.json`; a.click();
+    toast('Export erfolgreich');
+  };
+
+  const Delta = ({val, suffix=''}) => val===null ? null : (
+    <div className={`text-xs font-semibold mt-1 flex items-center gap-0.5 ${val>=0?'text-green-600':'text-red-500'}`}>
+      {val>=0?'↑':'↓'} {Math.abs(val).toFixed(1)}{suffix}
+    </div>
+  );
+
   return (
-    <div className="flex flex-col gap-6">
-      {/* Today summary */}
-      <div className="grid gap-4" style={{gridTemplateColumns:'repeat(auto-fill,minmax(180px,1fr))'}}>
-        {[
-          ['Heute Umsatz', fmtEur(heuteUmsatz), '#10b981'],
-          ['Heute Bestellungen', heuteBestellungen.length, '#6366f1'],
-          ['Gesamt Umsatz', fmtEur(allBestellungen.reduce((s,b)=>s+b.gesamt,0)), '#0f172a'],
-          ['Gesamt Bestellungen', allBestellungen.length, '#f59e0b'],
-        ].map(([l,v,c])=>(
-          <div key={l} className="glass rounded-2xl p-5 glow">
-            <div className="text-xs text-slate-500 mb-1">{l}</div>
-            <div className="text-2xl font-bold" style={{color:c}}>{v}</div>
-          </div>
+    <div className="flex flex-col gap-5">
+      {/* Period selector */}
+      <div className="flex flex-wrap gap-2">
+        {Object.entries(periodeLabels).map(([v,l])=>(
+          <button key={v} onClick={()=>setPeriode(v)}
+            className={`pill transition-all ${periode===v?'text-white':'text-slate-600 bg-white border border-black/10'}`}
+            style={periode===v?{background:'#0f172a'}:{}}>
+            {l}
+          </button>
         ))}
       </div>
 
-      {/* Heute Zahlungsarten */}
-      {Object.keys(zahlungsBreakdownHeute).length > 0 && (
+      {/* KPI cards */}
+      <div className="grid gap-4" style={{gridTemplateColumns:'repeat(auto-fill,minmax(170px,1fr))'}}>
         <div className="glass rounded-2xl p-5 glow">
-          <h3 className="text-sm font-bold text-slate-700 mb-3">Heute — Zahlungsarten</h3>
-          <div className="flex flex-col gap-2">
-            {Object.entries(zahlungsBreakdownHeute).map(([art,betrag])=>(
+          <div className="text-xs text-slate-500 mb-1">Umsatz</div>
+          <div className="text-2xl font-bold text-slate-900">{fmtEur(periodeUmsatz)}</div>
+          {periode!=='alles' && <Delta val={umsatzDelta} suffix="% vs. vorher"/>}
+        </div>
+        <div className="glass rounded-2xl p-5 glow">
+          <div className="text-xs text-slate-500 mb-1">Bestellungen</div>
+          <div className="text-2xl font-bold" style={{color:'#6366f1'}}>{periodeB.length}</div>
+          {periode!=='alles' && countDelta!==null && <Delta val={countDelta===0?0:countDelta} suffix={` vs. ${prevLabels[periode]}`}/>}
+        </div>
+        <div className="glass rounded-2xl p-5 glow">
+          <div className="text-xs text-slate-500 mb-1">Ø Bestellung</div>
+          <div className="text-2xl font-bold" style={{color:'#f59e0b'}}>
+            {periodeB.length>0 ? fmtEur(periodeUmsatz/periodeB.length) : '—'}
+          </div>
+        </div>
+        <div className="glass rounded-2xl p-5 glow">
+          <div className="text-xs text-slate-500 mb-1">Gesamt Umsatz</div>
+          <div className="text-2xl font-bold" style={{color:'#10b981'}}>{fmtEur(allBestellungen.reduce((s,b)=>s+b.gesamt,0))}</div>
+        </div>
+      </div>
+
+      {/* 7-day chart */}
+      <div className="glass rounded-2xl p-5 glow">
+        <h3 className="text-sm font-bold text-slate-700 mb-4">Umsatz letzte 7 Tage</h3>
+        <div className="flex items-end gap-2" style={{height:'110px'}}>
+          {chartData.map((d,i)=>(
+            <div key={i} className="flex-1 flex flex-col items-center gap-1">
+              {d.umsatz>0 && <span className="text-slate-500" style={{fontSize:'8px'}}>{fmtEur(d.umsatz)}</span>}
+              <div style={{width:'100%',height:`${Math.max(4,d.umsatz/maxUmsatz*80)}px`,background:'#6366f1',borderRadius:'4px 4px 0 0',opacity:d.umsatz===0?0.15:1,transition:'height .3s'}}/>
+              <span className="text-slate-400" style={{fontSize:'8px'}}>{d.label}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Zahlungsarten */}
+      {zahlungsBreakdown.length > 0 && (
+        <div className="glass rounded-2xl p-5 glow">
+          <h3 className="text-sm font-bold text-slate-700 mb-3">{periodeLabels[periode]} — Zahlungsarten</h3>
+          <div className="flex flex-col gap-2.5">
+            {zahlungsBreakdown.map(([art,betrag])=>(
               <div key={art} className="flex items-center gap-3">
-                <span className="text-xs text-slate-500 w-20">{art}</span>
-                <div className="flex-1 rounded-full overflow-hidden" style={{height:'8px',background:'#f1f5f9'}}>
-                  <div style={{height:'100%',width:`${(betrag/heuteUmsatz*100).toFixed(1)}%`,background:'#6366f1',borderRadius:'9px',transition:'width .3s'}}/>
+                <span className="text-xs text-slate-500 w-24 truncate">{art}</span>
+                <div className="flex-1 rounded-full overflow-hidden" style={{height:'7px',background:'#f1f5f9'}}>
+                  <div style={{height:'100%',width:`${periodeUmsatz>0?(betrag/periodeUmsatz*100).toFixed(1):0}%`,background:'#6366f1',borderRadius:'9px',transition:'width .4s'}}/>
                 </div>
                 <span className="text-xs font-semibold text-slate-700 w-16 text-right">{fmtEur(betrag)}</span>
               </div>
@@ -1486,38 +1359,61 @@ const FinanzenView = ({ cafe }) => {
         </div>
       )}
 
-      {/* 7-day chart */}
-      <div className="glass rounded-2xl p-5 glow">
-        <h3 className="text-sm font-bold text-slate-700 mb-4">Umsatz letzte 7 Tage</h3>
-        <div className="flex items-end gap-2" style={{height:'120px'}}>
-          {chartData.map((d,i)=>(
-            <div key={i} className="flex-1 flex flex-col items-center gap-1">
-              <span className="text-xs text-slate-500">{d.umsatz>0?fmtEur(d.umsatz):''}</span>
-              <div style={{width:'100%',height:`${Math.max(4,(d.umsatz/maxUmsatz*80))}px`,background:'#6366f1',borderRadius:'6px 6px 0 0',opacity:d.umsatz===0?0.15:1,transition:'height .3s'}}/>
-              <span className="text-xs text-slate-400" style={{fontSize:'9px'}}>{d.label}</span>
-            </div>
-          ))}
+      {/* Kategorien */}
+      {katBreakdown.length > 0 && (
+        <div className="glass rounded-2xl p-5 glow">
+          <h3 className="text-sm font-bold text-slate-700 mb-3">{periodeLabels[periode]} — Kategorien</h3>
+          <div className="flex flex-col gap-2.5">
+            {katBreakdown.map(([kat,betrag])=>{
+              const k=(cafe.kategorien||[]).find(x=>x.name===kat);
+              return (
+                <div key={kat} className="flex items-center gap-3">
+                  <span className="text-xs text-slate-500 w-24 truncate">{kat}</span>
+                  <div className="flex-1 rounded-full overflow-hidden" style={{height:'7px',background:'#f1f5f9'}}>
+                    <div style={{height:'100%',width:`${periodeUmsatz>0?(betrag/periodeUmsatz*100).toFixed(1):0}%`,background:k?.farbe||'#8b5cf6',borderRadius:'9px',transition:'width .4s'}}/>
+                  </div>
+                  <span className="text-xs font-semibold text-slate-700 w-16 text-right">{fmtEur(betrag)}</span>
+                </div>
+              );
+            })}
+          </div>
         </div>
-      </div>
+      )}
 
       {/* Schichten */}
       <div className="glass rounded-2xl p-5 glow">
         <h3 className="text-sm font-bold text-slate-700 mb-3">Schichten</h3>
         {schichten.length===0 && <div className="text-xs text-slate-400">Keine Schichten</div>}
-        <div className="flex flex-col gap-2">
+        <div className="flex flex-col">
           {schichten.map(s=>(
-            <div key={s.id} className="flex items-center justify-between py-2" style={{borderBottom:'1px solid rgba(0,0,0,0.05)'}}>
+            <div key={s.id} className="flex items-center justify-between py-2.5" style={{borderBottom:'1px solid rgba(0,0,0,0.05)'}}>
               <div>
                 <div className="text-sm font-semibold text-slate-700">{s.kassiererName}</div>
                 <div className="text-xs text-slate-400">{fmtDateTime(s.start)}{s.ende?` – ${fmtTime(s.ende)}`:' (aktiv)'}</div>
               </div>
               <div className="text-right">
                 <div className="text-sm font-bold text-slate-800">{fmtEur(s.umsatz||0)}</div>
-                <div className="text-xs text-slate-400">{s.bestellungen_count||0} Bestellungen</div>
+                <div className="text-xs text-slate-400">{s.bestellungen_count||0} Bestell.</div>
               </div>
             </div>
           ))}
         </div>
+      </div>
+
+      {/* Einstellungen */}
+      <div className="glass rounded-2xl p-5 glow">
+        <h3 className="text-sm font-bold text-slate-700 mb-3">Einstellungen</h3>
+        <label className="text-xs font-semibold text-slate-600 mb-1 block">Mindestbetrag Kartenzahlung (€)</label>
+        <div className="flex gap-2 mb-4">
+          <input type="number" className={INP} value={minKarte} onChange={e=>setMinKarte(e.target.value)} step="1" min="0"/>
+          <button onClick={saveMinKarte} disabled={savingEinst}
+            className="px-4 py-2.5 rounded-xl text-sm font-semibold text-white flex-shrink-0 disabled:opacity-40" style={{background:'#0f172a'}}>
+            Speichern
+          </button>
+        </div>
+        <button onClick={exportData} className="w-full py-2.5 rounded-xl text-sm font-semibold flex items-center justify-center gap-2 border border-black/10 hover:bg-black/5 transition-all">
+          <SI p={IC.download} size={14}/>JSON Export
+        </button>
       </div>
     </div>
   );
@@ -1663,50 +1559,42 @@ const PersonenView = ({ toast, profile }) => {
   );
 };
 
-// ─── EinstellungenView ────────────────────────────────────────────────────────
-const EinstellungenView = ({ cafe, toast, user, profile }) => {
-  const einst = cafe.einstellungen || {};
-  const [minKarte, setMinKarte] = useState(einst.min_karten_betrag||10);
-  const [newPin, setNewPin]     = useState('');
-  const [showPin, setShowPin]   = useState(false);
-  const [saving, setSaving]     = useState(false);
 
-  const saveEinst = async () => {
+// ─── KassiererSchichtStart ────────────────────────────────────────────────────
+const KassiererSchichtStart = ({ user, toast, profile, onStarted }) => {
+  const [kassenstart, setKassenstart] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  const start = async () => {
     setSaving(true);
     const ref = db.collection(profile||'k21-cafe').doc('data');
     const snap = await ref.get();
     const data = snap.exists ? snap.data() : DEFAULT_CAFE();
-    await ref.set({...data,einstellungen:{...data.einstellungen,min_karten_betrag:parseFloat(minKarte)||10}});
-    toast('Einstellungen gespeichert');
+    const neu = {
+      id:genId(), kassiererId:user.id, kassiererName:user.name,
+      start:new Date().toISOString(), ende:null,
+      kassenstart:parseFloat(kassenstart)||0, kassenende:null,
+      bestellungen_count:0, umsatz:0,
+    };
+    await ref.set({...data, schichten:[...(data.schichten||[]),neu]});
+    toast('Schicht gestartet');
+    onStarted(neu);
     setSaving(false);
   };
 
-  const exportData = async () => {
-    const ref = db.collection(profile||'k21-cafe').doc('data');
-    const snap = await ref.get();
-    const data = snap.exists ? snap.data() : {};
-    const blob = new Blob([JSON.stringify(data,null,2)],{type:'application/json'});
-    const url  = URL.createObjectURL(blob);
-    const a    = document.createElement('a'); a.href=url; a.download=`k21-cafe-export-${Date.now()}.json`; a.click();
-    URL.revokeObjectURL(url);
-    toast('Export erfolgreich');
-  };
-
   return (
-    <div className="max-w-md flex flex-col gap-4">
-      <div className="glass rounded-2xl p-5 glow">
-        <h3 className="text-sm font-bold text-slate-700 mb-4">Zahlungseinstellungen</h3>
-        <label className="text-xs font-semibold text-slate-600 mb-1 block">Mindestbetrag Kartenzahlung (€)</label>
-        <input type="number" className={INP + ' mb-3'} value={minKarte} onChange={e=>setMinKarte(e.target.value)} step="1" min="0"/>
-        <button onClick={saveEinst} disabled={saving} className="w-full py-2.5 rounded-xl text-sm font-semibold text-white disabled:opacity-40" style={{background:'#0f172a'}}>
-          Speichern
-        </button>
-      </div>
-
-      <div className="glass rounded-2xl p-5 glow">
-        <h3 className="text-sm font-bold text-slate-700 mb-4">Daten exportieren</h3>
-        <button onClick={exportData} className="w-full py-2.5 rounded-xl text-sm font-semibold flex items-center justify-center gap-2 border border-black/10 hover:bg-black/5 transition-all">
-          <SI p={IC.download} size={14}/>JSON Export
+    <div style={{minHeight:'calc(100vh - 100px)',display:'flex',alignItems:'center',justifyContent:'center',padding:'20px'}}>
+      <div className="glass rounded-2xl glow p-8 w-full max-w-sm text-center">
+        <div className="text-5xl mb-4">⏰</div>
+        <h2 className="text-xl font-bold text-slate-800 mb-1">Schicht starten</h2>
+        <p className="text-sm text-slate-500 mb-6">Gib das Startgeld in der Kasse ein</p>
+        <input type="number" className={INP+' mb-4 text-center text-xl font-bold'} placeholder="Startgeld (€)"
+          value={kassenstart} onChange={e=>setKassenstart(e.target.value)} step="0.01" min="0" autoFocus
+          onKeyDown={e=>e.key==='Enter'&&start()}/>
+        <button onClick={start} disabled={saving}
+          className="w-full py-3 rounded-xl text-sm font-bold text-white disabled:opacity-40"
+          style={{background:'#000000',borderRadius:30}}>
+          {saving?'Wird gestartet…':'Schicht starten →'}
         </button>
       </div>
     </div>
@@ -1715,15 +1603,13 @@ const EinstellungenView = ({ cafe, toast, user, profile }) => {
 
 // ─── Nav config ───────────────────────────────────────────────────────────────
 const NAV_ITEMS = [
-  { id:'kasse',        label:'Kasse',       icon:IC.cart,    perm:'kasse' },
-  { id:'bestellungen', label:'Bestellungen',icon:IC.orders,  perm:'bestellungen' },
-  { id:'schicht',      label:'Schicht',     icon:IC.shift,   perm:'schicht' },
-  { id:'produkte',     label:'Produkte',    icon:IC.tag,     perm:'produkte' },
-  { id:'gutscheine',   label:'Gutscheine',  icon:IC.voucher, perm:'gutscheine' },
-  { id:'wertkarten',   label:'Wertkarten',  icon:IC.card,    perm:'wertkarten' },
-  { id:'finanzen',     label:'Finanzen',    icon:IC.chart,   perm:'finanzen' },
-  { id:'einstellungen',label:'Einstellungen',icon:IC.cog,   perm:'einstellungen' },
-  { id:'personen',     label:'Personen',    icon:IC.users,   perm:'personen' },
+  { id:'kasse',            label:'Kasse',         icon:IC.cart,    perm:'kasse' },
+  { id:'bestellungen',     label:'Bestellungen',  icon:IC.orders,  perm:'bestellungen' },
+  { id:'schicht',          label:'Schicht',       icon:IC.shift,   perm:'schicht' },
+  { id:'produkte',         label:'Produkte',      icon:IC.tag,     perm:'produkte' },
+  { id:'zahlungsmethoden', label:'Zahlungen',     icon:IC.cash,    perm:'zahlungsmethoden' },
+  { id:'finanzen',         label:'Finanzen',      icon:IC.chart,   perm:'finanzen' },
+  { id:'personen',         label:'Personen',      icon:IC.users,   perm:'personen' },
 ];
 
 // ─── App ──────────────────────────────────────────────────────────────────────
@@ -1798,15 +1684,15 @@ const App = () => {
 
   const renderPage = () => {
     if (!cafe) return <div className="flex items-center justify-center h-64 text-slate-400 text-sm">Verbinde mit Datenbank…</div>;
-    if (activePage==='kasse')         return <KasseView cafe={cafe} user={user} toast={toast} activeSchicht={activeSchicht} profile={profile}/>;
-    if (activePage==='bestellungen')  return <BestellungenView cafe={cafe} user={user} toast={toast} activeSchicht={activeSchicht} profile={profile}/>;
-    if (activePage==='schicht')       return <SchichtView cafe={cafe} user={user} toast={toast} activeSchicht={activeSchicht} setActiveSchicht={setActiveSchicht} profile={profile}/>;
-    if (activePage==='produkte')      return <ProdukteView cafe={cafe} user={user} toast={toast} profile={profile}/>;
-    if (activePage==='gutscheine')    return <GutscheineView cafe={cafe} toast={toast} profile={profile}/>;
-    if (activePage==='wertkarten')    return <WertkartenView cafe={cafe} toast={toast} profile={profile}/>;
-    if (activePage==='finanzen')      return <FinanzenView cafe={cafe}/>;
-    if (activePage==='einstellungen') return <EinstellungenView cafe={cafe} toast={toast} user={user} profile={profile}/>;
-    if (activePage==='personen')      return <PersonenView toast={toast} profile={profile}/>;
+    if (user.role==='kassierer' && !activeSchicht)
+      return <KassiererSchichtStart user={user} toast={toast} profile={profile} onStarted={setActiveSchicht}/>;
+    if (activePage==='kasse')            return <KasseView cafe={cafe} user={user} toast={toast} activeSchicht={activeSchicht} profile={profile}/>;
+    if (activePage==='bestellungen')     return <BestellungenView cafe={cafe} user={user} toast={toast} activeSchicht={activeSchicht} profile={profile}/>;
+    if (activePage==='schicht')          return <SchichtView cafe={cafe} user={user} toast={toast} activeSchicht={activeSchicht} setActiveSchicht={setActiveSchicht} profile={profile}/>;
+    if (activePage==='produkte')         return <ProdukteView cafe={cafe} user={user} toast={toast} profile={profile}/>;
+    if (activePage==='zahlungsmethoden') return <ZahlungsMethodenView cafe={cafe} toast={toast} profile={profile}/>;
+    if (activePage==='finanzen')         return <FinanzenView cafe={cafe} toast={toast} profile={profile}/>;
+    if (activePage==='personen')         return <PersonenView toast={toast} profile={profile}/>;
     return null;
   };
 
