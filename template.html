@@ -529,6 +529,12 @@ const CheckoutModal = ({ warenkorb, gesamt, cafe, schicht, user, toast, onClose,
     if ((methode.mindestbetrag||0) > 0 && restBetrag < methode.mindestbetrag) {
       toast(`Mindestbetrag für ${methode.name}: ${fmtEur(methode.mindestbetrag)}`,'warn'); return;
     }
+    // Maximalbetrag check
+    const maxBetrag = methode.maximalbetrag||0;
+    const bereitsGebucht = zahlungen.filter(z=>z.art===methode.id).reduce((s,z)=>s+z.betrag,0);
+    if (maxBetrag > 0 && bereitsGebucht >= maxBetrag) {
+      toast(`Maximalbetrag für ${methode.name} erreicht: ${fmtEur(maxBetrag)}`,'warn'); return;
+    }
     if (methode.gutschein) {
       if (gutscheinBetrag <= 0) { toast('Gutscheinwert deckt nichts ab','warn'); return; }
       const label = methode.gutschein_typ==='produkte'
@@ -540,7 +546,9 @@ const CheckoutModal = ({ warenkorb, gesamt, cafe, schicht, user, toast, onClose,
       const eingabe = parseFloat(betrag)||0;
       // Karten-artige Methoden (kein Wechselgeld) — buchen exakt Restbetrag
       const b = methode.id==='bar' ? eingabe : restBetrag;
-      const actual = Math.min(b, restBetrag);
+      let actual = Math.min(b, restBetrag);
+      // Cap at remaining Maximalbetrag
+      if (maxBetrag > 0) actual = Math.min(actual, maxBetrag - bereitsGebucht);
       if (actual <= 0) { toast('Betrag eingeben','error'); return; }
       setZahlungen(p=>[...p,{art:methode.id, name:methode.name, betrag:actual}]);
       setBetrag('');
@@ -620,15 +628,20 @@ const CheckoutModal = ({ warenkorb, gesamt, cafe, schicht, user, toast, onClose,
             <p className="text-xs font-semibold text-slate-500">Zahlungsart wählen</p>
             <div className="flex flex-wrap gap-2">
               {methoden.map(m=>{
-                const disabled = (m.mindestbetrag||0)>0 && restBetrag<m.mindestbetrag;
+                const bereitsGebT = zahlungen.filter(z=>z.art===m.id).reduce((s,z)=>s+z.betrag,0);
+                const maxErr = (m.maximalbetrag||0)>0 && bereitsGebT>=m.maximalbetrag;
+                const minErr = (m.mindestbetrag||0)>0 && restBetrag<m.mindestbetrag;
+                const disabled = minErr || maxErr;
+                const hint = maxErr ? `Max. ${fmtEur(m.maximalbetrag)} erreicht` : minErr ? `Min. ${fmtEur(m.mindestbetrag)}` : '';
                 return (
                   <button key={m.id} onClick={()=>{setAktuelleId(m.id);setBetrag('');}}
                     disabled={disabled}
-                    title={disabled?`Mindestbetrag: ${fmtEur(m.mindestbetrag)}`:''}
+                    title={hint}
                     className={`pill transition-all disabled:opacity-40 ${aktuelleId===m.id?'text-white':'text-slate-600 bg-white border border-black/10'}`}
                     style={aktuelleId===m.id?{background: m.gutschein?'#6d28d9':'#000000'}:{}}>
                     {m.name}
-                    {(m.mindestbetrag||0)>0 && <span className="ml-1 opacity-60">Min. {fmtEur(m.mindestbetrag)}</span>}
+                    {(m.mindestbetrag||0)>0 && !maxErr && <span className="ml-1 opacity-60">Min. {fmtEur(m.mindestbetrag)}</span>}
+                    {(m.maximalbetrag||0)>0 && <span className="ml-1 opacity-60">Max. {fmtEur(m.maximalbetrag)}</span>}
                   </button>
                 );
               })}
@@ -1415,7 +1428,7 @@ const ProdukteView = ({ cafe, toast, profile }) => {
 };
 
 // ─── ZahlungsMethodenView ─────────────────────────────────────────────────────
-const EMPTY_ZM = () => ({name:'', mindestbetrag:'', gutschein:false, gutschein_typ:'betrag', gutschein_wert:''});
+const EMPTY_ZM = () => ({name:'', mindestbetrag:'', maximalbetrag:'', gutschein:false, gutschein_typ:'betrag', gutschein_wert:''});
 
 const ZahlungsMethodenView = ({ cafe, toast, profile }) => {
   const [modal, setModal] = useState(null);
@@ -1431,6 +1444,7 @@ const ZahlungsMethodenView = ({ cafe, toast, profile }) => {
     const entry = {
       name: form.name.trim(),
       mindestbetrag: parseFloat(form.mindestbetrag)||0,
+      maximalbetrag: parseFloat(form.maximalbetrag)||0,
       gutschein: !!form.gutschein,
       gutschein_typ: form.gutschein ? form.gutschein_typ : null,
       gutschein_wert: form.gutschein ? (parseFloat(form.gutschein_wert)||0) : null,
@@ -1454,6 +1468,7 @@ const ZahlungsMethodenView = ({ cafe, toast, profile }) => {
     setForm({
       name: m.name,
       mindestbetrag: m.mindestbetrag||'',
+      maximalbetrag: m.maximalbetrag||'',
       gutschein: !!m.gutschein,
       gutschein_typ: m.gutschein_typ||'betrag',
       gutschein_wert: m.gutschein_wert||'',
@@ -1467,6 +1482,7 @@ const ZahlungsMethodenView = ({ cafe, toast, profile }) => {
     if (m.aktiv) out.push({label:'Aktiv', bg:'#d1fae5', col:'#065f46'});
     else         out.push({label:'Inaktiv', bg:'#f1f5f9', col:'#64748b'});
     if (m.mindestbetrag>0) out.push({label:`Min. ${fmtEur(m.mindestbetrag)}`, bg:'#fef3c7', col:'#92400e'});
+    if (m.maximalbetrag>0) out.push({label:`Max. ${fmtEur(m.maximalbetrag)}`, bg:'#fee2e2', col:'#991b1b'});
     if (m.gutschein) {
       const v = m.gutschein_typ==='produkte'
         ? `${m.gutschein_wert} Produkt${m.gutschein_wert===1?'':'e'}`
@@ -1540,14 +1556,22 @@ const ZahlungsMethodenView = ({ cafe, toast, profile }) => {
                 placeholder="z.B. Bar, Karte, PayPal" autoFocus/>
             </div>
 
-            {/* Mindestbetrag */}
-            <div>
-              <label className="text-xs font-semibold text-slate-600 mb-1 block">Mindestbetrag (€)</label>
-              <input type="number" className={INP} value={form.mindestbetrag}
-                onChange={e=>sf('mindestbetrag',e.target.value)} step="0.50" min="0"
-                placeholder="0 = kein Minimum"/>
-              <p className="text-xs text-slate-400 mt-1">Mindestbetrag damit diese Zahlart gewählt werden kann.</p>
+            {/* Min / Max */}
+            <div className="grid gap-3" style={{gridTemplateColumns:'1fr 1fr'}}>
+              <div>
+                <label className="text-xs font-semibold text-slate-600 mb-1 block">Mindestbetrag (€)</label>
+                <input type="number" className={INP} value={form.mindestbetrag}
+                  onChange={e=>sf('mindestbetrag',e.target.value)} step="0.50" min="0"
+                  placeholder="0 = kein Limit"/>
+              </div>
+              <div>
+                <label className="text-xs font-semibold text-slate-600 mb-1 block">Maximalbetrag (€)</label>
+                <input type="number" className={INP} value={form.maximalbetrag}
+                  onChange={e=>sf('maximalbetrag',e.target.value)} step="0.50" min="0"
+                  placeholder="0 = kein Limit"/>
+              </div>
             </div>
+            <p className="text-xs text-slate-400 -mt-2">0 = kein Limit für Min./Max.</p>
 
             {/* Gutschein */}
             <div className="rounded-xl p-4" style={{background:'#f8fafc',border:'1px solid rgba(0,0,0,0.06)'}}>
