@@ -113,7 +113,7 @@ let CAFE_PROFILES = DEFAULT_CAFE_PROFILES;
 
 const getAreaAccess = (user, areaId) => {
   if (!user) return 'none';
-  if (user.role === 'owner') return 'full';
+  if ((user.role||'').toLowerCase() === 'owner') return 'full';
   const acc = user.areaAccess;
   if (!acc || acc === '__all__') return 'full';
   return Array.isArray(acc) && acc.includes(areaId) ? 'full' : 'none';
@@ -152,6 +152,7 @@ const DEFAULT_CAFE = () => ({
 // ─── Role permissions ─────────────────────────────────────────────────────────
 const can = (role, action) => {
   if (!role) return false;
+  const r = (role||'').toLowerCase(); // normalize — Firebase might store 'Admin' vs 'admin'
   const map = {
     kasse:             ['owner','admin','teamleiter','kassierer'],
     bestellungen:      ['owner','admin','teamleiter','kassierer','barista','finanzen'],
@@ -163,7 +164,7 @@ const can = (role, action) => {
     personen:          ['owner','admin','teamleiter'],
     stornieren:        ['owner','admin','teamleiter'],
   };
-  return (map[action]||[]).includes(role);
+  return (map[action]||[]).includes(r);
 };
 
 // ─── Toast ────────────────────────────────────────────────────────────────────
@@ -2757,7 +2758,7 @@ const App = () => {
         const data = snap.exists ? snap.data() : DEFAULT_CAFE();
         setCafe({...DEFAULT_CAFE(), ...data});
         // Find active schicht for this user
-        const aktiv = (data.schichten||[]).find(s=>!s.ende && (user.role==='owner'||s.kassiererId===user.id));
+        const aktiv = (data.schichten||[]).find(s=>!s.ende && (['owner','admin'].includes((user.role||'').toLowerCase())||s.kassiererId===user.id));
         setActiveSchicht(aktiv||null);
         setSyncState('synced');
       },
@@ -2802,7 +2803,8 @@ const App = () => {
   const activePage = can(user.role, NAV_ITEMS.find(n=>n.id===page)?.perm) ? page : (visibleNav[0]?.id||'bestellungen');
 
   const renderPage = () => {
-    if (user.role==='kassierer' && !activeSchicht)
+    const role = (user.role||'').toLowerCase();
+    if (role==='kassierer' && !activeSchicht)
       return <KassiererSchichtStart user={user} toast={toast} profile={profile} cafe={cafe} onStarted={setActiveSchicht}/>;
     if (activePage==='kasse')            return <KasseView cafe={cafe} user={user} toast={toast} activeSchicht={activeSchicht} profile={profile}/>;
     if (activePage==='bestellungen')     return <BestellungenView cafe={cafe} user={user} toast={toast} activeSchicht={activeSchicht} profile={profile}/>;
