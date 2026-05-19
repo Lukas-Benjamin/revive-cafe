@@ -234,6 +234,89 @@ const SyncDot = ({ state }) => {
   );
 };
 
+// ─── SignaturePad ─────────────────────────────────────────────────────────────
+const SignaturePad = ({ label, value, onChange }) => {
+  const canvasRef = useRef(null);
+  const drawing   = useRef(false);
+  const lastPos   = useRef(null);
+
+  const getXY = (e, canvas) => {
+    const rect = canvas.getBoundingClientRect();
+    const src  = e.touches ? e.touches[0] : e;
+    return {
+      x: (src.clientX - rect.left) * (canvas.width  / rect.width),
+      y: (src.clientY - rect.top)  * (canvas.height / rect.height),
+    };
+  };
+
+  const startDraw = (e) => {
+    e.preventDefault();
+    drawing.current = true;
+    const pos = getXY(e, canvasRef.current);
+    lastPos.current = pos;
+    const ctx = canvasRef.current.getContext('2d');
+    ctx.beginPath();
+    ctx.arc(pos.x, pos.y, 1.2, 0, Math.PI * 2);
+    ctx.fillStyle = '#000';
+    ctx.fill();
+  };
+
+  const draw = (e) => {
+    if (!drawing.current) return;
+    e.preventDefault();
+    const canvas = canvasRef.current;
+    const ctx    = canvas.getContext('2d');
+    const pos    = getXY(e, canvas);
+    ctx.beginPath();
+    ctx.moveTo(lastPos.current.x, lastPos.current.y);
+    ctx.lineTo(pos.x, pos.y);
+    ctx.strokeStyle = '#000';
+    ctx.lineWidth   = 2.2;
+    ctx.lineCap     = 'round';
+    ctx.lineJoin    = 'round';
+    ctx.stroke();
+    lastPos.current = pos;
+    onChange(canvas.toDataURL('image/png'));
+  };
+
+  const endDraw = () => { drawing.current = false; };
+
+  const clear = (e) => {
+    e.stopPropagation();
+    const canvas = canvasRef.current;
+    canvas.getContext('2d').clearRect(0, 0, canvas.width, canvas.height);
+    onChange('');
+  };
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-1.5">
+        <span className="text-xs font-bold text-slate-600">{label}</span>
+        {value && (
+          <button type="button" onClick={clear}
+            className="text-xs text-slate-400 hover:text-red-500 flex items-center gap-0.5 transition-all">
+            <SI p={IC.refresh} size={11}/> Löschen
+          </button>
+        )}
+      </div>
+      <div style={{position:'relative',borderRadius:'12px',overflow:'hidden',border:value?'1.5px solid #000':'1.5px dashed #cbd5e1',background:'#fff'}}>
+        <canvas
+          ref={canvasRef}
+          width={500} height={130}
+          style={{display:'block',width:'100%',height:'110px',cursor:'crosshair',touchAction:'none'}}
+          onMouseDown={startDraw} onMouseMove={draw} onMouseUp={endDraw} onMouseLeave={endDraw}
+          onTouchStart={startDraw} onTouchMove={draw} onTouchEnd={endDraw}
+        />
+        {!value && (
+          <div style={{position:'absolute',inset:0,display:'flex',alignItems:'center',justifyContent:'center',pointerEvents:'none'}}>
+            <span style={{color:'#cbd5e1',fontSize:'11px',fontStyle:'italic'}}>Hier unterschreiben</span>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
 // ─── Login View ───────────────────────────────────────────────────────────────
 const LoginView = ({ onLogin, profiles }) => {
   const [users,    setUsers]    = useState([]);
@@ -821,6 +904,8 @@ const SchichtView = ({ cafe, user, toast, activeSchicht, setActiveSchicht, profi
   const [endeKassenende, setEndeKassenende] = useState('');
   const [unterschrift1, setUnterschrift1]   = useState('');
   const [unterschrift2, setUnterschrift2]   = useState('');
+  const [sig1, setSig1] = useState('');
+  const [sig2, setSig2] = useState('');
   const [abschluss, setAbschluss]           = useState(null); // {code, kassenende, umsatz, ...}
   const ref  = () => db.collection(profile||'k21-cafe').doc('data');
   const write = (patch) => ref().set({...DEFAULT_CAFE(),...cafe,...patch}).catch(e=>toast(e.message,'error'));
@@ -863,16 +948,18 @@ const SchichtView = ({ cafe, user, toast, activeSchicht, setActiveSchicht, profi
   };
 
   const endeSchicht = () => {
-    if (!unterschrift1.trim()) { toast('Bitte Kassierer-Name eintragen','error'); return; }
-    if (!unterschrift2.trim()) { toast('Bitte zweite Person eintragen','error'); return; }
+    if (!sig1) { toast('Kassierer muss unterschreiben','error'); return; }
+    if (!sig2) { toast('Zweite Person muss unterschreiben','error'); return; }
     const code = generateCode(activeSchicht);
     const updated = {
       ...activeSchicht,
       ende: new Date().toISOString(),
       kassenende: parseFloat(endeKassenende)||0,
-      abgenommen_von: unterschrift2.trim(),
-      abgenommen_kassierer: unterschrift1.trim(),
+      abgenommen_von: unterschrift2.trim()||'Person 2',
+      abgenommen_kassierer: unterschrift1.trim()||activeSchicht.kassiererName,
       umschlag_code: code,
+      sig_kassierer: sig1,
+      sig_zweite: sig2,
     };
     setActiveSchicht(null);
     setShowEndeModal(false);
@@ -886,6 +973,7 @@ const SchichtView = ({ cafe, user, toast, activeSchicht, setActiveSchicht, profi
       kassierer: activeSchicht.kassiererName,
       start: activeSchicht.start,
       barEinnahmen,
+      sig1, sig2,
     });
     ref().set({...DEFAULT_CAFE(),...cafe, schichten:(cafe.schichten||[]).map(s=>s.id===activeSchicht.id?updated:s)}).catch(e=>toast(e.message,'error'));
   };
@@ -1023,7 +1111,7 @@ const SchichtView = ({ cafe, user, toast, activeSchicht, setActiveSchicht, profi
             ))}
           </div>
         )}
-        <button onClick={()=>{ setUnterschrift1(user.name||''); setUnterschrift2(''); setEndeKassenende(''); setShowEndeModal(true); }}
+        <button onClick={()=>{ setUnterschrift1(user.name||''); setUnterschrift2(''); setEndeKassenende(''); setSig1(''); setSig2(''); setShowEndeModal(true); }}
           className="w-full py-3 rounded-xl text-sm font-bold text-red-600 border border-red-200 hover:bg-red-50 transition-all">
           Schicht beenden
         </button>
@@ -1117,28 +1205,31 @@ const SchichtView = ({ cafe, user, toast, activeSchicht, setActiveSchicht, profi
               </div>
 
               {/* Vier-Augen-Unterschriften */}
-              <div>
-                <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-3">Bestätigung durch zwei Personen</h4>
-                <div className="grid gap-3" style={{gridTemplateColumns:'1fr 1fr'}}>
-                  <div>
-                    <label className="text-xs font-semibold text-slate-600 mb-1 block">Kassierer</label>
-                    <input className={INP} placeholder="Name Kassierer"
-                      value={unterschrift1} onChange={e=>setUnterschrift1(e.target.value)}/>
-                  </div>
-                  <div>
-                    <label className="text-xs font-semibold text-slate-600 mb-1 block">Zweite Person</label>
-                    <input className={INP} placeholder="Name zweite Person"
-                      value={unterschrift2} onChange={e=>setUnterschrift2(e.target.value)}/>
-                  </div>
+              <div className="flex flex-col gap-4">
+                <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wide">Unterschriften — Vier-Augen-Prinzip</h4>
+
+                {/* Kassierer */}
+                <div>
+                  <input className={INP+' mb-2'} placeholder="Name Kassierer (optional)"
+                    value={unterschrift1} onChange={e=>setUnterschrift1(e.target.value)}/>
+                  <SignaturePad label="Unterschrift Kassierer" value={sig1} onChange={setSig1}/>
                 </div>
-                <div className="text-xs text-slate-400 mt-2">Beide Namen müssen eingetragen sein, um die Schicht zu beenden.</div>
+
+                {/* Zweite Person */}
+                <div>
+                  <input className={INP+' mb-2'} placeholder="Name zweite Person (optional)"
+                    value={unterschrift2} onChange={e=>setUnterschrift2(e.target.value)}/>
+                  <SignaturePad label="Unterschrift zweite Person" value={sig2} onChange={setSig2}/>
+                </div>
+
+                <p className="text-xs text-slate-400">Beide Personen müssen das Feld mit der Hand unterschreiben.</p>
               </div>
 
               {/* Bestätigen */}
               <button onClick={endeSchicht}
-                disabled={!unterschrift1.trim()||!unterschrift2.trim()}
+                disabled={!sig1||!sig2}
                 className="w-full py-3 rounded-xl text-sm font-bold transition-all"
-                style={{background:unterschrift1.trim()&&unterschrift2.trim()?'#dc2626':'#f1f5f9', color:unterschrift1.trim()&&unterschrift2.trim()?'#fff':'#94a3b8', cursor:unterschrift1.trim()&&unterschrift2.trim()?'pointer':'not-allowed'}}>
+                style={{background:sig1&&sig2?'#dc2626':'#f1f5f9', color:sig1&&sig2?'#fff':'#94a3b8', cursor:sig1&&sig2?'pointer':'not-allowed'}}>
                 Schicht verbindlich beenden
               </button>
             </div>
@@ -1186,6 +1277,18 @@ const SchichtView = ({ cafe, user, toast, activeSchicht, setActiveSchicht, profi
                   </div>
                 ))}
               </div>
+
+              {/* Signaturen */}
+              {(abschluss.sig1||abschluss.sig2) && (
+                <div className="grid gap-3" style={{gridTemplateColumns:'1fr 1fr'}}>
+                  {[['Kassierer',abschluss.sig1],['Zweite Person',abschluss.sig2]].map(([lbl,src])=>src?(
+                    <div key={lbl}>
+                      <div className="text-xs text-slate-400 mb-1">{lbl}</div>
+                      <img src={src} alt={lbl} style={{width:'100%',height:'60px',objectFit:'contain',border:'1px solid #e2e8f0',borderRadius:'8px',background:'#fff'}}/>
+                    </div>
+                  ):null)}
+                </div>
+              )}
 
               <button onClick={()=>setAbschluss(null)}
                 className="w-full py-3 rounded-xl text-sm font-bold text-white"
