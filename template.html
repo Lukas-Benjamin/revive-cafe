@@ -2759,12 +2759,24 @@ const FinanzenView = ({ cafe, toast, profile, profiles, user }) => {
 };
 
 // ─── PersonenView ─────────────────────────────────────────────────────────────
-const PersonenView = ({ toast, profile }) => {
+const PersonenView = ({ toast, profile, user }) => {
   const [users, setUsers] = useState([]);
   const [modal, setModal] = useState(null);
   const [form, setForm] = useState({name:'',pin:'',role:'kassierer',farbe:'#8b5cf6',areaAccess:'__all__'});
   const [showPin, setShowPin] = useState(false);
+  const [myPin, setMyPin]     = useState('');
+  const [showMP, setShowMP]   = useState(false);
+  const [pinOK, setPinOK]     = useState(false);
   const set = (k,v) => setForm(p=>({...p,[k]:v}));
+
+  const changeMyPin = async () => {
+    if (!myPin.trim()) return;
+    if (user?.id && user.id !== '__owner__') {
+      await db.collection('cafe-users').doc(user.id).update({pin: myPin.trim()}).catch(()=>{});
+    }
+    setMyPin(''); setPinOK(true); setTimeout(()=>setPinOK(false),2500);
+    toast('PIN gespeichert ✓');
+  };
 
   const COLORS = ['#6366f1','#8b5cf6','#ec4899','#ef4444','#f97316','#f59e0b','#10b981','#06b6d4'];
 
@@ -2797,6 +2809,29 @@ const PersonenView = ({ toast, profile }) => {
 
   return (
     <div>
+      {/* Mein PIN ändern */}
+      <div className="glass rounded-2xl p-4 mb-5 glow">
+        <p className="text-slate-500 text-xs font-semibold uppercase tracking-wider mb-3">Mein PIN ändern</p>
+        <div className="flex gap-2">
+          <div className="relative flex-1">
+            <input type="text" autoComplete="off" style={{WebkitTextSecurity:showMP?'none':'disc'}}
+              value={myPin} onChange={e=>setMyPin(e.target.value)}
+              placeholder="Neuer PIN" className={INP+' pr-10'}
+              onKeyDown={e=>e.key==='Enter'&&changeMyPin()}/>
+            <button type="button" onClick={()=>setShowMP(p=>!p)}
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700 transition-all">
+              <SI p={IC.eye} size={14}/>
+            </button>
+          </div>
+          <button onClick={changeMyPin} disabled={!myPin.trim()}
+            className="px-4 py-2.5 text-sm font-bold text-white disabled:opacity-40 transition-all rounded-xl"
+            style={{background:'#000000'}}>
+            {pinOK?'✓':'Speichern'}
+          </button>
+        </div>
+        {user?.id==='__owner__' && <p className="text-xs text-slate-400 mt-2">Admin-PIN ist fest eingestellt.</p>}
+      </div>
+
       <div className="flex items-center justify-between mb-4">
         <div className="text-xs text-slate-500">{users.length} Personen</div>
         <button onClick={openAdd} className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-semibold text-white" style={{background:'#000000'}}>
@@ -2993,7 +3028,11 @@ const App = () => {
   // On login, jump to appropriate default page
   useEffect(() => {
     if (!user) return;
-    const firstAllowed = NAV_ITEMS.find(n=>can(user.role,n.perm));
+    const isAdmin = ['owner','admin'].includes((user.role||'').toLowerCase());
+    const firstAllowed = NAV_ITEMS.find(n=>{
+      if (isAdmin && (n.id==='kasse'||n.id==='bestellungen')) return false;
+      return can(user.role,n.perm);
+    });
     if (firstAllowed) setPage(firstAllowed.id);
   }, [user]);
 
@@ -3020,10 +3059,17 @@ const App = () => {
     if (startProfile) setProfile(startProfile.id);
   }} profiles={profiles}/>;
 
-  const visibleNav = NAV_ITEMS.filter(n=>can(user.role,n.perm));
+  const isAdminRole = ['owner','admin'].includes((user.role||'').toLowerCase());
+  const visibleNav = NAV_ITEMS.filter(n=>{
+    if (isAdminRole && (n.id==='kasse'||n.id==='bestellungen')) return false;
+    return can(user.role,n.perm);
+  });
 
-  // Make sure current page is accessible
-  const activePage = can(user.role, NAV_ITEMS.find(n=>n.id===page)?.perm) ? page : (visibleNav[0]?.id||'bestellungen');
+  // Make sure current page is accessible (also respect admin exclusions)
+  const activePage = (() => {
+    if (isAdminRole && (page==='kasse'||page==='bestellungen')) return visibleNav[0]?.id||'schicht';
+    return can(user.role, NAV_ITEMS.find(n=>n.id===page)?.perm) ? page : (visibleNav[0]?.id||'schicht');
+  })();
 
   const renderPage = () => {
     const role = (user.role||'').toLowerCase();
@@ -3035,7 +3081,7 @@ const App = () => {
     if (activePage==='produkte')         return <ProdukteView cafe={cafe} user={user} toast={toast} profile={profile}/>;
     if (activePage==='zahlungsmethoden') return <ZahlungsMethodenView cafe={cafe} toast={toast} profile={profile}/>;
     if (activePage==='finanzen')         return <FinanzenView cafe={cafe} toast={toast} profile={profile} profiles={profiles} user={user}/>;
-    if (activePage==='personen')         return <PersonenView toast={toast} profile={profile}/>;
+    if (activePage==='personen')         return <PersonenView toast={toast} profile={profile} user={user}/>;
     return null;
   };
 
