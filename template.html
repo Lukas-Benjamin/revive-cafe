@@ -950,7 +950,16 @@ const ProdukteView = ({ cafe, toast, profile }) => {
     write({kategorien});
   };
 
-  const deleteKat = (id) => { write({kategorien:(cafe.kategorien||[]).filter(k=>k.id!==id)}); toast('Kategorie gelöscht','warn'); };
+  const deleteKat = (id) => {
+    const kat = (cafe.kategorien||[]).find(k=>k.id===id);
+    const count = (cafe.produkte||[]).filter(p=>p.kategorie_id===id).length;
+    const msg = count>0
+      ? `"${kat?.name}" löschen? Die ${count} zugehörigen Produkte bleiben erhalten (ohne Kategorie).`
+      : `"${kat?.name}" löschen?`;
+    if (!window.confirm(msg)) return;
+    write({kategorien:(cafe.kategorien||[]).filter(k=>k.id!==id)});
+    toast('Kategorie gelöscht','warn');
+  };
 
   const openAdd  = () => { setForm({name:'',preis:'',kategorie_id:cafe.kategorien?.[0]?.id||'',beschreibung:'',aktiv:true}); setModal('add'); };
   const openEdit = (p) => { setForm({name:p.name,preis:p.preis,kategorie_id:p.kategorie_id||'',beschreibung:p.beschreibung||'',aktiv:p.aktiv!==false}); setModal(p.id); };
@@ -963,7 +972,8 @@ const ProdukteView = ({ cafe, toast, profile }) => {
       if (map[p.kategorie_id]) map[p.kategorie_id].produkte.push(p);
       else map['_none'].produkte.push(p);
     });
-    return Object.values(map).filter(g=>g.produkte.length>0);
+    // always show real categories (even if empty), only hide _none if empty
+    return Object.values(map).filter(g=>g.kat.id==='_none'?g.produkte.length>0:true);
   }, [cafe.produkte, cafe.kategorien]);
 
   const totalProdukte = (cafe.produkte||[]).length;
