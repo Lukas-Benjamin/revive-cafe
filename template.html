@@ -512,30 +512,25 @@ const CheckoutModal = ({ warenkorb, gesamt, cafe, schicht, user, toast, onClose,
     }
   };
 
-  const saveOrder = async () => {
+  const saveOrder = () => {
     if (restBetrag > 0.005) { toast('Noch nicht vollständig bezahlt','error'); return; }
-    setSaving(true);
-    try {
-      const ref = db.collection(profile||'k21-cafe').doc('data');
-      const snap = await ref.get();
-      const data = snap.exists ? snap.data() : DEFAULT_CAFE();
-      const schichtBestellungen = (data.bestellungen||[]).filter(b=>b.schicht_id===schicht.id);
-      const nummer = padNum(schichtBestellungen.length + 1);
-      const neueBestellung = {
-        id: genId(), schicht_id: schicht.id, nummer,
-        artikel: warenkorb.map(i=>({...i,fertig:false})),
-        gesamt, zahlung: zahlungen, status:'offen',
-        erstellt_am: new Date().toISOString(),
-        kassiererId: user.id, kassiererName: user.name,
-      };
-      const updSchichten = (data.schichten||[]).map(s=>
-        s.id!==schicht.id ? s : {...s, bestellungen_count:(s.bestellungen_count||0)+1, umsatz:(s.umsatz||0)+gesamt}
-      );
-      await ref.set({...data, schichten:updSchichten, bestellungen:[...(data.bestellungen||[]),neueBestellung]});
-      toast(`Bestellung #${nummer} gespeichert ✓`);
-      onSuccess();
-    } catch(e) { toast('Fehler: '+e.message,'error'); }
-    setSaving(false);
+    const schichtBestellungen = (cafe.bestellungen||[]).filter(b=>b.schicht_id===schicht.id);
+    const nummer = padNum(schichtBestellungen.length + 1);
+    const neueBestellung = {
+      id: genId(), schicht_id: schicht.id, nummer,
+      artikel: warenkorb.map(i=>({...i,fertig:false})),
+      gesamt, zahlung: zahlungen, status:'offen',
+      erstellt_am: new Date().toISOString(),
+      kassiererId: user.id, kassiererName: user.name,
+    };
+    const updSchichten = (cafe.schichten||[]).map(s=>
+      s.id!==schicht.id ? s : {...s, bestellungen_count:(s.bestellungen_count||0)+1, umsatz:(s.umsatz||0)+gesamt}
+    );
+    toast(`Bestellung #${nummer} gespeichert ✓`);
+    onSuccess();
+    db.collection(profile||'k21-cafe').doc('data')
+      .set({...DEFAULT_CAFE(),...cafe, schichten:updSchichten, bestellungen:[...(cafe.bestellungen||[]),neueBestellung]})
+      .catch(e=>toast('Fehler: '+e.message,'error'));
   };
 
   return (
@@ -610,10 +605,10 @@ const CheckoutModal = ({ warenkorb, gesamt, cafe, schicht, user, toast, onClose,
           </div>
         )}
 
-        <button onClick={saveOrder} disabled={restBetrag>0.005||saving}
+        <button onClick={saveOrder} disabled={restBetrag>0.005}
           className="w-full py-3 rounded-xl text-sm font-bold text-white transition-all disabled:opacity-40 mt-2"
           style={{background:'#10b981'}}>
-          {saving ? 'Wird gespeichert…' : 'Bestellung abschließen ✓'}
+          Bestellung abschließen ✓
         </button>
       </div>
     </Modal>
@@ -632,31 +627,28 @@ const BestellungenView = ({ cafe, user, toast, activeSchicht, profile }) => {
     return list.sort((a,b)=>new Date(b.erstellt_am)-new Date(a.erstellt_am));
   }, [cafe.bestellungen, filter, activeSchicht]);
 
-  const markItemFertig = async (bestellung, artikelIdx) => {
-    const ref = db.collection(profile||'k21-cafe').doc('data');
-    const snap = await ref.get();
-    const data = snap.exists ? snap.data() : DEFAULT_CAFE();
-    const updBestellungen = (data.bestellungen||[]).map(b => {
+  const ref = () => db.collection(profile||'k21-cafe').doc('data');
+  const write = (patch) => ref().set({...DEFAULT_CAFE(),...cafe,...patch}).catch(e=>toast(e.message,'error'));
+
+  const markItemFertig = (bestellung, artikelIdx) => {
+    const updBestellungen = (cafe.bestellungen||[]).map(b => {
       if (b.id!==bestellung.id) return b;
       const artikel = b.artikel.map((a,i)=>i===artikelIdx?{...a,fertig:true}:a);
       const allFertig = artikel.every(a=>a.fertig);
       return { ...b, artikel, status: allFertig?'fertig':b.status };
     });
-    await ref.set({...data, bestellungen:updBestellungen}).catch(()=>{});
+    write({bestellungen:updBestellungen});
   };
 
-  const stornieren = async (b) => {
+  const stornieren = (b) => {
     if (!can(user.role,'stornieren')) return;
-    const ref = db.collection(profile||'k21-cafe').doc('data');
-    const snap = await ref.get();
-    const data = snap.exists ? snap.data() : DEFAULT_CAFE();
-    const updBestellungen = (data.bestellungen||[]).map(x=>x.id===b.id?{...x,status:'storniert'}:x);
-    const updSchichten = (data.schichten||[]).map(s=>{
+    const updBestellungen = (cafe.bestellungen||[]).map(x=>x.id===b.id?{...x,status:'storniert'}:x);
+    const updSchichten = (cafe.schichten||[]).map(s=>{
       if(s.id!==b.schicht_id) return s;
       return {...s, umsatz:Math.max(0,(s.umsatz||0)-b.gesamt), bestellungen_count:Math.max(0,(s.bestellungen_count||1)-1)};
     });
-    await ref.set({...data,bestellungen:updBestellungen,schichten:updSchichten}).catch(()=>{});
     toast('Bestellung storniert','warn');
+    write({bestellungen:updBestellungen,schichten:updSchichten});
   };
 
   const artLabel = { bar:'Bar', karte:'Karte', gutschein:'Gutschein', wertkarte:'Wertkarte' };
@@ -730,43 +722,27 @@ const BestellungenView = ({ cafe, user, toast, activeSchicht, profile }) => {
 const SchichtView = ({ cafe, user, toast, activeSchicht, setActiveSchicht, profile }) => {
   const [kassenstart, setKassenstart] = useState('');
   const [kassenende, setKassenende]   = useState('');
-  const [saving, setSaving]           = useState(false);
   const [showBericht, setShowBericht] = useState(false);
+  const ref = () => db.collection(profile||'k21-cafe').doc('data');
 
-  const startSchicht = async () => {
-    setSaving(true);
-    const ref = db.collection(profile||'k21-cafe').doc('data');
-    const snap = await ref.get();
-    const data = snap.exists ? snap.data() : DEFAULT_CAFE();
+  const startSchicht = () => {
     const neu = {
-      id: genId(),
-      kassiererId: user.id,
-      kassiererName: user.name,
-      start: new Date().toISOString(),
-      ende: null,
-      kassenstart: parseFloat(kassenstart)||0,
-      kassenende: null,
-      bestellungen_count: 0,
-      umsatz: 0,
+      id:genId(), kassiererId:user.id, kassiererName:user.name,
+      start:new Date().toISOString(), ende:null,
+      kassenstart:parseFloat(kassenstart)||0, kassenende:null,
+      bestellungen_count:0, umsatz:0,
     };
-    await ref.set({...data, schichten:[...(data.schichten||[]),neu]});
     setActiveSchicht(neu);
-    toast('Schicht gestartet');
-    setSaving(false);
+    toast('Schicht gestartet ✓');
+    ref().set({...DEFAULT_CAFE(),...cafe, schichten:[...(cafe.schichten||[]),neu]}).catch(e=>toast(e.message,'error'));
   };
 
-  const endeSchicht = async () => {
-    setSaving(true);
-    const ref = db.collection(profile||'k21-cafe').doc('data');
-    const snap = await ref.get();
-    const data = snap.exists ? snap.data() : DEFAULT_CAFE();
-    const updated = { ...activeSchicht, ende: new Date().toISOString(), kassenende: parseFloat(kassenende)||0 };
-    const updSchichten = (data.schichten||[]).map(s=>s.id===activeSchicht.id?updated:s);
-    await ref.set({...data,schichten:updSchichten});
+  const endeSchicht = () => {
+    const updated = {...activeSchicht, ende:new Date().toISOString(), kassenende:parseFloat(kassenende)||0};
     setActiveSchicht(null);
     setShowBericht(false);
-    toast('Schicht beendet');
-    setSaving(false);
+    toast('Schicht beendet ✓');
+    ref().set({...DEFAULT_CAFE(),...cafe, schichten:(cafe.schichten||[]).map(s=>s.id===activeSchicht.id?updated:s)}).catch(e=>toast(e.message,'error'));
   };
 
   const schichtBestellungen = useMemo(() =>
@@ -802,8 +778,8 @@ const SchichtView = ({ cafe, user, toast, activeSchicht, setActiveSchicht, profi
           <label className="text-xs font-semibold text-slate-600 mb-1 block">Kassenstart (Bargeld in Kasse)</label>
           <input type="number" className={INP + ' mb-4'} placeholder="z.B. 50.00"
             value={kassenstart} onChange={e=>setKassenstart(e.target.value)} step="0.01"/>
-          <button onClick={startSchicht} disabled={saving}
-            className="w-full py-3 rounded-xl text-sm font-bold text-white disabled:opacity-40"
+          <button onClick={startSchicht}
+            className="w-full py-3 rounded-xl text-sm font-bold text-white"
             style={{background:'#0f172a'}}>
             Schicht starten
           </button>
@@ -867,8 +843,8 @@ const SchichtView = ({ cafe, user, toast, activeSchicht, setActiveSchicht, profi
         <label className="text-xs font-semibold text-slate-600 mb-1 block">Kassenende (Bargeld in Kasse)</label>
         <input type="number" className={INP + ' mb-3'} placeholder="z.B. 80.00"
           value={kassenende} onChange={e=>setKassenende(e.target.value)} step="0.01"/>
-        <button onClick={endeSchicht} disabled={saving}
-          className="w-full py-3 rounded-xl text-sm font-bold text-red-600 border border-red-200 hover:bg-red-50 transition-all disabled:opacity-40">
+        <button onClick={endeSchicht}
+          className="w-full py-3 rounded-xl text-sm font-bold text-red-600 border border-red-200 hover:bg-red-50 transition-all">
           Schicht beenden
         </button>
       </div>
@@ -885,59 +861,46 @@ const ProdukteView = ({ cafe, toast, profile }) => {
   const set = (k,v) => setForm(p=>({...p,[k]:v}));
 
   const COLORS = ['#6366f1','#8b5cf6','#ec4899','#ef4444','#f97316','#f59e0b','#10b981','#06b6d4','#3b82f6'];
+  const ref = () => db.collection(profile||'k21-cafe').doc('data');
+  const write = (patch) => ref().set({...DEFAULT_CAFE(),...cafe,...patch}).catch(e=>toast(e.message,'error'));
 
-  const saveProdukt = async () => {
+  const saveProdukt = () => {
     if (!form.name.trim()||!form.preis) { toast('Name und Preis erforderlich','error'); return; }
-    const ref = db.collection(profile||'k21-cafe').doc('data');
-    const snap = await ref.get();
-    const data = snap.exists ? snap.data() : DEFAULT_CAFE();
-    let produkte = data.produkte||[];
+    let produkte = [...(cafe.produkte||[])];
     if (modal==='add') {
       produkte = [...produkte, {id:genId(),name:form.name.trim(),preis:parseFloat(form.preis),kategorie_id:form.kategorie_id,emoji:form.emoji,beschreibung:form.beschreibung,aktiv:true}];
     } else {
       produkte = produkte.map(p=>p.id===modal?{...p,name:form.name.trim(),preis:parseFloat(form.preis),kategorie_id:form.kategorie_id,emoji:form.emoji,beschreibung:form.beschreibung}:p);
     }
-    await ref.set({...data,produkte});
-    toast(modal==='add'?'Produkt hinzugefügt':'Produkt aktualisiert');
     setModal(null);
+    toast(modal==='add'?'Produkt hinzugefügt ✓':'Produkt aktualisiert ✓');
+    write({produkte});
   };
 
-  const toggleAktiv = async (p) => {
-    const ref = db.collection(profile||'k21-cafe').doc('data');
-    const snap = await ref.get();
-    const data = snap.exists ? snap.data() : DEFAULT_CAFE();
-    await ref.set({...data,produkte:(data.produkte||[]).map(x=>x.id===p.id?{...x,aktiv:!x.aktiv}:x)});
+  const toggleAktiv = (p) => {
+    write({produkte:(cafe.produkte||[]).map(x=>x.id===p.id?{...x,aktiv:!x.aktiv}:x)});
   };
 
-  const deleteProdukt = async (id) => {
-    const ref = db.collection(profile||'k21-cafe').doc('data');
-    const snap = await ref.get();
-    const data = snap.exists ? snap.data() : DEFAULT_CAFE();
-    await ref.set({...data,produkte:(data.produkte||[]).filter(p=>p.id!==id)});
+  const deleteProdukt = (id) => {
+    write({produkte:(cafe.produkte||[]).filter(p=>p.id!==id)});
     toast('Produkt gelöscht','warn');
   };
 
-  const saveKat = async () => {
+  const saveKat = () => {
     if (!katForm.name.trim()) return;
-    const ref = db.collection(profile||'k21-cafe').doc('data');
-    const snap = await ref.get();
-    const data = snap.exists ? snap.data() : DEFAULT_CAFE();
-    let kategorien = data.kategorien||[];
+    let kategorien = [...(cafe.kategorien||[])];
     if (katModal==='add') {
       kategorien = [...kategorien,{id:genId(),name:katForm.name.trim(),farbe:katForm.farbe}];
     } else {
       kategorien = kategorien.map(k=>k.id===katModal?{...k,name:katForm.name.trim(),farbe:katForm.farbe}:k);
     }
-    await ref.set({...data,kategorien});
-    toast('Kategorie gespeichert');
     setKatModal(null);
+    toast('Kategorie gespeichert ✓');
+    write({kategorien});
   };
 
-  const deleteKat = async (id) => {
-    const ref = db.collection(profile||'k21-cafe').doc('data');
-    const snap = await ref.get();
-    const data = snap.exists ? snap.data() : DEFAULT_CAFE();
-    await ref.set({...data,kategorien:(data.kategorien||[]).filter(k=>k.id!==id)});
+  const deleteKat = (id) => {
+    write({kategorien:(cafe.kategorien||[]).filter(k=>k.id!==id)});
     toast('Kategorie gelöscht','warn');
   };
 
@@ -1084,35 +1047,29 @@ const ZahlungsMethodenView = ({ cafe, toast, profile }) => {
   const EMOJIS = ['💵','💳','📱','🎁','🏷','💰','🔄','📋','🧾','🪙'];
   const methoden = cafe.zahlungsmethoden || [];
 
-  const save = async () => {
+  const ref = () => db.collection(profile||'k21-cafe').doc('data');
+  const write = (zm) => ref().set({...DEFAULT_CAFE(),...cafe,zahlungsmethoden:zm}).catch(e=>toast(e.message,'error'));
+
+  const save = () => {
     if (!form.name.trim()) { toast('Name erforderlich','error'); return; }
-    const ref = db.collection(profile||'k21-cafe').doc('data');
-    const snap = await ref.get();
-    const data = snap.exists ? snap.data() : DEFAULT_CAFE();
-    let zm = data.zahlungsmethoden || [];
+    let zm = [...methoden];
     if (modal==='add') {
       zm = [...zm, {id:genId(), name:form.name.trim(), emoji:form.emoji, aktiv:true, fixed:false}];
     } else {
       zm = zm.map(m=>m.id===modal ? {...m, name:form.name.trim(), emoji:form.emoji} : m);
     }
-    await ref.set({...data, zahlungsmethoden:zm});
-    toast(modal==='add'?'Zahlungsmethode hinzugefügt':'Aktualisiert');
     setModal(null);
+    toast(modal==='add'?'Hinzugefügt ✓':'Aktualisiert ✓');
+    write(zm);
   };
 
-  const toggleAktiv = async (m) => {
+  const toggleAktiv = (m) => {
     if (m.fixed) return;
-    const ref = db.collection(profile||'k21-cafe').doc('data');
-    const snap = await ref.get();
-    const data = snap.exists ? snap.data() : DEFAULT_CAFE();
-    await ref.set({...data, zahlungsmethoden:(data.zahlungsmethoden||[]).map(x=>x.id===m.id?{...x,aktiv:!x.aktiv}:x)});
+    write(methoden.map(x=>x.id===m.id?{...x,aktiv:!x.aktiv}:x));
   };
 
-  const del = async (id) => {
-    const ref = db.collection(profile||'k21-cafe').doc('data');
-    const snap = await ref.get();
-    const data = snap.exists ? snap.data() : DEFAULT_CAFE();
-    await ref.set({...data, zahlungsmethoden:(data.zahlungsmethoden||[]).filter(x=>x.id!==id)});
+  const del = (id) => {
+    write(methoden.filter(x=>x.id!==id));
     toast('Gelöscht','warn');
   };
 
@@ -1186,7 +1143,6 @@ const ZahlungsMethodenView = ({ cafe, toast, profile }) => {
 const FinanzenView = ({ cafe, toast, profile }) => {
   const [periode, setPeriode] = useState('heute');
   const [minKarte, setMinKarte] = useState((cafe.einstellungen||{}).min_karten_betrag||10);
-  const [savingEinst, setSavingEinst] = useState(false);
 
   const allBestellungen = useMemo(() =>
     (cafe.bestellungen||[]).filter(b=>b.status!=='storniert'), [cafe.bestellungen]);
@@ -1250,14 +1206,11 @@ const FinanzenView = ({ cafe, toast, profile }) => {
   const periodeLabels = {heute:'Heute',woche:'Diese Woche',monat:'Dieser Monat',alles:'Gesamt'};
   const prevLabels    = {heute:'Gestern',woche:'Letzte Woche',monat:'Letzter Monat',alles:''};
 
-  const saveMinKarte = async () => {
-    setSavingEinst(true);
-    const ref = db.collection(profile||'k21-cafe').doc('data');
-    const snap = await ref.get();
-    const data = snap.exists ? snap.data() : DEFAULT_CAFE();
-    await ref.set({...data, einstellungen:{...(data.einstellungen||{}), min_karten_betrag:parseFloat(minKarte)||10}});
-    toast('Gespeichert');
-    setSavingEinst(false);
+  const saveMinKarte = () => {
+    db.collection(profile||'k21-cafe').doc('data')
+      .set({...DEFAULT_CAFE(),...cafe, einstellungen:{...(cafe.einstellungen||{}), min_karten_betrag:parseFloat(minKarte)||10}})
+      .catch(e=>toast(e.message,'error'));
+    toast('Gespeichert ✓');
   };
 
   const exportData = async () => {
@@ -1390,7 +1343,7 @@ const FinanzenView = ({ cafe, toast, profile }) => {
         <label className="text-xs font-semibold text-slate-600 mb-1 block">Mindestbetrag Kartenzahlung (€)</label>
         <div className="flex gap-2 mb-4">
           <input type="number" className={INP} value={minKarte} onChange={e=>setMinKarte(e.target.value)} step="1" min="0"/>
-          <button onClick={saveMinKarte} disabled={savingEinst}
+          <button onClick={saveMinKarte}
             className="px-4 py-2.5 rounded-xl text-sm font-semibold text-white flex-shrink-0 disabled:opacity-40" style={{background:'#0f172a'}}>
             Speichern
           </button>
@@ -1545,25 +1498,21 @@ const PersonenView = ({ toast, profile }) => {
 
 
 // ─── KassiererSchichtStart ────────────────────────────────────────────────────
-const KassiererSchichtStart = ({ user, toast, profile, onStarted }) => {
+const KassiererSchichtStart = ({ user, toast, profile, cafe, onStarted }) => {
   const [kassenstart, setKassenstart] = useState('');
-  const [saving, setSaving] = useState(false);
 
-  const start = async () => {
-    setSaving(true);
-    const ref = db.collection(profile||'k21-cafe').doc('data');
-    const snap = await ref.get();
-    const data = snap.exists ? snap.data() : DEFAULT_CAFE();
+  const start = () => {
     const neu = {
       id:genId(), kassiererId:user.id, kassiererName:user.name,
       start:new Date().toISOString(), ende:null,
       kassenstart:parseFloat(kassenstart)||0, kassenende:null,
       bestellungen_count:0, umsatz:0,
     };
-    await ref.set({...data, schichten:[...(data.schichten||[]),neu]});
-    toast('Schicht gestartet');
+    toast('Schicht gestartet ✓');
     onStarted(neu);
-    setSaving(false);
+    db.collection(profile||'k21-cafe').doc('data')
+      .set({...DEFAULT_CAFE(),...cafe, schichten:[...(cafe.schichten||[]),neu]})
+      .catch(e=>toast(e.message,'error'));
   };
 
   return (
@@ -1575,10 +1524,10 @@ const KassiererSchichtStart = ({ user, toast, profile, onStarted }) => {
         <input type="number" className={INP+' mb-4 text-center text-xl font-bold'} placeholder="Startgeld (€)"
           value={kassenstart} onChange={e=>setKassenstart(e.target.value)} step="0.01" min="0" autoFocus
           onKeyDown={e=>e.key==='Enter'&&start()}/>
-        <button onClick={start} disabled={saving}
-          className="w-full py-3 rounded-xl text-sm font-bold text-white disabled:opacity-40"
+        <button onClick={start}
+          className="w-full py-3 rounded-xl text-sm font-bold text-white"
           style={{background:'#000000',borderRadius:30}}>
-          {saving?'Wird gestartet…':'Schicht starten →'}
+          Schicht starten →
         </button>
       </div>
     </div>
@@ -1669,7 +1618,7 @@ const App = () => {
   const renderPage = () => {
     if (!cafe) return <div className="flex items-center justify-center h-64 text-slate-400 text-sm">Verbinde mit Datenbank…</div>;
     if (user.role==='kassierer' && !activeSchicht)
-      return <KassiererSchichtStart user={user} toast={toast} profile={profile} onStarted={setActiveSchicht}/>;
+      return <KassiererSchichtStart user={user} toast={toast} profile={profile} cafe={cafe} onStarted={setActiveSchicht}/>;
     if (activePage==='kasse')            return <KasseView cafe={cafe} user={user} toast={toast} activeSchicht={activeSchicht} profile={profile}/>;
     if (activePage==='bestellungen')     return <BestellungenView cafe={cafe} user={user} toast={toast} activeSchicht={activeSchicht} profile={profile}/>;
     if (activePage==='schicht')          return <SchichtView cafe={cafe} user={user} toast={toast} activeSchicht={activeSchicht} setActiveSchicht={setActiveSchicht} profile={profile}/>;
