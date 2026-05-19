@@ -136,8 +136,8 @@ const DEFAULT_CAFE = () => ({
   produkte: [],
   kategorien: [],
   zahlungsmethoden: [
-    {id:'bar',   name:'Bar',   emoji:'💵', aktiv:true, fixed:true},
-    {id:'karte', name:'Karte', emoji:'💳', aktiv:true, fixed:true},
+    {id:'bar',   name:'Bar',   emoji:'💵', aktiv:true},
+    {id:'karte', name:'Karte', emoji:'💳', aktiv:true},
   ],
   schichten: [],
   bestellungen: [],
@@ -1054,7 +1054,7 @@ const ZahlungsMethodenView = ({ cafe, toast, profile }) => {
     if (!form.name.trim()) { toast('Name erforderlich','error'); return; }
     let zm = [...methoden];
     if (modal==='add') {
-      zm = [...zm, {id:genId(), name:form.name.trim(), emoji:form.emoji, aktiv:true, fixed:false}];
+      zm = [...zm, {id:genId(), name:form.name.trim(), emoji:form.emoji, aktiv:true}];
     } else {
       zm = zm.map(m=>m.id===modal ? {...m, name:form.name.trim(), emoji:form.emoji} : m);
     }
@@ -1063,48 +1063,42 @@ const ZahlungsMethodenView = ({ cafe, toast, profile }) => {
     write(zm);
   };
 
-  const toggleAktiv = (m) => {
-    if (m.fixed) return;
-    write(methoden.map(x=>x.id===m.id?{...x,aktiv:!x.aktiv}:x));
-  };
-
-  const del = (id) => {
-    write(methoden.filter(x=>x.id!==id));
-    toast('Gelöscht','warn');
-  };
+  const toggleAktiv = (m) => write(methoden.map(x=>x.id===m.id?{...x,aktiv:!x.aktiv}:x));
+  const del = (id) => { write(methoden.filter(x=>x.id!==id)); toast('Gelöscht','warn'); };
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-4">
-        <p className="text-xs text-slate-500">{methoden.length} Zahlungsmethoden</p>
+      <div className="flex items-center justify-between mb-5">
+        <div>
+          <h2 className="text-sm font-bold text-slate-800">Zahlungsmethoden</h2>
+          <p className="text-xs text-slate-400 mt-0.5">{methoden.filter(m=>m.aktiv).length} von {methoden.length} aktiv</p>
+        </div>
         <button onClick={()=>{setForm({name:'',emoji:'💰'});setModal('add');}}
           className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-semibold text-white" style={{background:'#0f172a'}}>
           <SI p={IC.plus} size={14}/>Methode
         </button>
       </div>
       <div className="flex flex-col gap-2">
+        {methoden.length===0 && <div className="text-center py-12 text-slate-400 text-sm">Noch keine Zahlungsmethoden</div>}
         {methoden.map(m=>(
-          <div key={m.id} className={`glass rounded-2xl px-4 py-3 flex items-center justify-between ${!m.aktiv?'opacity-50':''}`}>
+          <div key={m.id} className={`glass rounded-2xl px-4 py-3 flex items-center justify-between transition-all ${!m.aktiv?'opacity-50':''}`}>
             <div className="flex items-center gap-3">
               <span className="text-xl">{m.emoji}</span>
               <div>
                 <div className="text-sm font-bold text-slate-800">{m.name}</div>
-                {m.fixed && <span className="pill text-xs" style={{background:'#f1f5f9',color:'#64748b'}}>Standard</span>}
+                <span className="pill text-xs" style={{background:m.aktiv?'#d1fae5':'#f1f5f9',color:m.aktiv?'#065f46':'#64748b'}}>
+                  {m.aktiv?'Aktiv':'Inaktiv'}
+                </span>
               </div>
             </div>
             <div className="flex items-center gap-2">
-              {m.fixed
-                ? <span className="pill text-xs" style={{background:'#d1fae5',color:'#065f46'}}>Immer aktiv</span>
-                : <>
-                    <button onClick={()=>toggleAktiv(m)}
-                      className={`toggle ${m.aktiv?'on':''}`}
-                      style={{background:m.aktiv?'#10b981':'#cbd5e1'}}/>
-                    <button onClick={()=>{setForm({name:m.name,emoji:m.emoji});setModal(m.id);}}
-                      className="text-slate-400 hover:text-slate-700 transition-all"><SI p={IC.edit} size={15}/></button>
-                    <button onClick={()=>del(m.id)}
-                      className="text-slate-400 hover:text-red-500 transition-all"><SI p={IC.trash} size={15}/></button>
-                  </>
-              }
+              <button onClick={()=>toggleAktiv(m)}
+                className={`toggle ${m.aktiv?'on':''}`}
+                style={{background:m.aktiv?'#10b981':'#cbd5e1'}}/>
+              <button onClick={()=>{setForm({name:m.name,emoji:m.emoji});setModal(m.id);}}
+                className="text-slate-400 hover:text-slate-700 transition-all"><SI p={IC.edit} size={15}/></button>
+              <button onClick={()=>del(m.id)}
+                className="text-slate-400 hover:text-red-500 transition-all"><SI p={IC.trash} size={15}/></button>
             </div>
           </div>
         ))}
@@ -1140,31 +1134,66 @@ const ZahlungsMethodenView = ({ cafe, toast, profile }) => {
 };
 
 // ─── FinanzenView ─────────────────────────────────────────────────────────────
-const FinanzenView = ({ cafe, toast, profile }) => {
-  const [periode, setPeriode] = useState('heute');
+const FinanzenView = ({ cafe, toast, profile, profiles, user }) => {
+  const [periode, setPeriode] = useState('woche');
+  const [gesamt, setGesamt]   = useState(false);
+  const [allData, setAllData]  = useState([]);
+  const [loadingAll, setLoadingAll] = useState(false);
+  const [customFrom, setCustomFrom] = useState('');
+  const [customTo, setCustomTo]     = useState('');
+  const [tab, setTab]          = useState('uebersicht');
   const [minKarte, setMinKarte] = useState((cafe.einstellungen||{}).min_karten_betrag||10);
 
-  const allBestellungen = useMemo(() =>
-    (cafe.bestellungen||[]).filter(b=>b.status!=='storniert'), [cafe.bestellungen]);
+  // Load all areas for Gesamt view
+  useEffect(() => {
+    if (!gesamt || !profiles) return;
+    setLoadingAll(true);
+    Promise.all(
+      profiles.map(pp => db.collection(pp.id).doc('data').get().then(snap => ({
+        id: pp.id, label: pp.label, color: pp.color||'#8b5cf6',
+        data: snap.exists ? {...DEFAULT_CAFE(), ...snap.data()} : DEFAULT_CAFE()
+      })).catch(()=>({ id:pp.id, label:pp.label, color:pp.color||'#8b5cf6', data:DEFAULT_CAFE() })))
+    ).then(r => { setAllData(r); setLoadingAll(false); });
+  }, [gesamt, profiles]);
 
-  const getRange = useCallback((p) => {
+  const sourceList = useMemo(() => {
+    if (gesamt && allData.length) return allData;
+    return [{ id: profile, label: 'Aktuell', color: '#6366f1', data: cafe }];
+  }, [gesamt, allData, profile, cafe]);
+
+  const allBestellungen = useMemo(() =>
+    sourceList.flatMap(src =>
+      (src.data.bestellungen||[]).filter(b=>b.status!=='storniert')
+        .map(b=>({...b,_area:src.label,_areaId:src.id,_areaColor:src.color}))
+    ), [sourceList]);
+
+  const allStorniert = useMemo(() =>
+    sourceList.flatMap(src => (src.data.bestellungen||[]).filter(b=>b.status==='storniert')),
+    [sourceList]);
+
+  const getRange = useCallback(p => {
     const now = new Date();
     const today = new Date(now.getFullYear(),now.getMonth(),now.getDate());
-    if (p==='heute') return [today, new Date(today.getTime()+86400000)];
-    if (p==='woche') {
-      const mon = new Date(today); mon.setDate(today.getDate()-(today.getDay()||7)+1);
-      return [mon, new Date(mon.getTime()+7*86400000)];
+    if (p==='heute')        return [today, new Date(today.getTime()+86400000)];
+    if (p==='gestern')      { const g=new Date(today.getTime()-86400000); return [g,today]; }
+    if (p==='woche')        { const m=new Date(today); m.setDate(today.getDate()-(today.getDay()||7)+1); return [m,new Date(m.getTime()+7*86400000)]; }
+    if (p==='letzteWoche')  { const m=new Date(today); m.setDate(today.getDate()-(today.getDay()||7)+1); const pm=new Date(m.getTime()-7*86400000); return [pm,m]; }
+    if (p==='monat')        return [new Date(now.getFullYear(),now.getMonth(),1),new Date(now.getFullYear(),now.getMonth()+1,1)];
+    if (p==='letzterMonat') { const s=new Date(now.getFullYear(),now.getMonth()-1,1); return [s,new Date(now.getFullYear(),now.getMonth(),1)]; }
+    if (p==='quartal')      { const q=Math.floor(now.getMonth()/3); return [new Date(now.getFullYear(),q*3,1),new Date(now.getFullYear(),q*3+3,1)]; }
+    if (p==='jahr')         return [new Date(now.getFullYear(),0,1),new Date(now.getFullYear()+1,0,1)];
+    if (p==='custom')       {
+      const s = customFrom ? new Date(customFrom) : new Date(0);
+      const e = customTo   ? new Date(new Date(customTo).getTime()+86400000) : new Date(now.getTime()+86400000);
+      return [s,e];
     }
-    if (p==='monat') return [new Date(now.getFullYear(),now.getMonth(),1), new Date(now.getFullYear(),now.getMonth()+1,1)];
     return [new Date(0), new Date(now.getTime()+86400000)];
-  }, []);
-
-  const filterBy = useCallback((list,[s,e]) =>
-    list.filter(b=>{ const d=new Date(b.erstellt_am); return d>=s&&d<e; }), []);
+  }, [customFrom, customTo]);
 
   const [rs,re] = useMemo(()=>getRange(periode),[periode,getRange]);
-  const [ps,pe] = useMemo(()=>{ const [s,e]=getRange(periode); const dur=e-s; return [new Date(s-dur),new Date(s)]; },[periode,getRange]);
+  const [ps,pe] = useMemo(()=>{ const [s,e]=getRange(periode); const d=Math.max(e-s,86400000); return [new Date(s-d),new Date(s)]; },[periode,getRange]);
 
+  const filterBy = useCallback((list,[s,e])=>list.filter(b=>{ const d=new Date(b.erstellt_am); return d>=s&&d<e; }),[]);
   const periodeB = useMemo(()=>filterBy(allBestellungen,[rs,re]),[allBestellungen,rs,re,filterBy]);
   const prevB    = useMemo(()=>filterBy(allBestellungen,[ps,pe]),[allBestellungen,ps,pe,filterBy]);
 
@@ -1172,6 +1201,17 @@ const FinanzenView = ({ cafe, toast, profile }) => {
   const prevUmsatz    = prevB.reduce((s,b)=>s+b.gesamt,0);
   const umsatzDelta   = prevUmsatz>0 ? (periodeUmsatz-prevUmsatz)/prevUmsatz*100 : null;
   const countDelta    = prevB.length>0 ? periodeB.length-prevB.length : null;
+  const avgBasket     = periodeB.length ? periodeUmsatz/periodeB.length : 0;
+  const avgItems      = periodeB.length ? periodeB.reduce((s,b)=>s+(b.artikel||[]).reduce((a,x)=>a+x.menge,0),0)/periodeB.length : 0;
+  const stornoCount   = filterBy(allStorniert,[rs,re]).length;
+
+  const schichten = useMemo(()=>
+    sourceList.flatMap(src=>(src.data.schichten||[]).map(s=>({...s,_area:src.label})))
+      .sort((a,b)=>new Date(b.start)-new Date(a.start)),
+    [sourceList]);
+  const periodeSchichten = useMemo(()=>schichten.filter(s=>{
+    const d=new Date(s.start); return d>=rs&&d<re;
+  }),[schichten,rs,re]);
 
   const zahlungsBreakdown = useMemo(()=>{
     const map={};
@@ -1183,28 +1223,70 @@ const FinanzenView = ({ cafe, toast, profile }) => {
     const map={};
     periodeB.forEach(b=>(b.artikel||[]).forEach(a=>{
       const kat=(cafe.kategorien||[]).find(k=>k.id===a.kategorie_id);
-      const key=kat?.name||'Sonstige';
-      map[key]=(map[key]||0)+a.preis*a.menge;
+      const key=kat?.name||'Sonstige'; const col=kat?.farbe||'#8b5cf6';
+      if(!map[key]) map[key]={betrag:0,count:0,color:col};
+      map[key].betrag+=a.preis*a.menge; map[key].count+=a.menge;
     }));
-    return Object.entries(map).sort((a,b)=>b[1]-a[1]);
+    return Object.entries(map).map(([k,v])=>({name:k,...v})).sort((a,b)=>b.betrag-a.betrag);
   },[periodeB,cafe.kategorien]);
 
+  const topProdukte = useMemo(()=>{
+    const map={};
+    periodeB.forEach(b=>(b.artikel||[]).forEach(a=>{
+      if(!map[a.name]) map[a.name]={name:a.name,emoji:a.emoji||'',betrag:0,count:0};
+      map[a.name].betrag+=a.preis*a.menge; map[a.name].count+=a.menge;
+    }));
+    return Object.values(map).sort((a,b)=>b.betrag-a.betrag).slice(0,10);
+  },[periodeB]);
+
+  // 7/30-day chart
+  const chartDays = periode==='monat'||periode==='letzterMonat'||periode==='quartal'||periode==='jahr' ? 30 : 7;
   const chartData = useMemo(()=>{
     const days=[];
-    for(let i=6;i>=0;i--){
-      const d=new Date(); d.setDate(d.getDate()-i);
+    const endDay = periode==='gestern'||periode==='letzteWoche'||periode==='letzterMonat' ? re : new Date();
+    for(let i=chartDays-1;i>=0;i--){
+      const d=new Date(endDay); d.setDate(d.getDate()-i);
       const s=new Date(d.getFullYear(),d.getMonth(),d.getDate());
       const e=new Date(s.getTime()+86400000);
-      days.push({label:d.toLocaleDateString('de-DE',{weekday:'short',day:'numeric'}),umsatz:filterBy(allBestellungen,[s,e]).reduce((s,b)=>s+b.gesamt,0)});
+      days.push({
+        label: chartDays<=7 ? d.toLocaleDateString('de-DE',{weekday:'short'}) : d.toLocaleDateString('de-DE',{day:'numeric',month:'short'}),
+        umsatz: filterBy(allBestellungen,[s,e]).reduce((s,b)=>s+b.gesamt,0),
+        count:  filterBy(allBestellungen,[s,e]).length,
+      });
     }
     return days;
-  },[allBestellungen,filterBy]);
-  const maxUmsatz = Math.max(...chartData.map(d=>d.umsatz),1);
+  },[allBestellungen,chartDays,periode,re,filterBy]);
+  const maxChartUmsatz = Math.max(...chartData.map(d=>d.umsatz),1);
 
-  const schichten = useMemo(()=>[...(cafe.schichten||[])].sort((a,b)=>new Date(b.start)-new Date(a.start)).slice(0,20),[cafe.schichten]);
+  // Hourly distribution
+  const stunden = useMemo(()=>{
+    const arr=Array(24).fill(0);
+    periodeB.forEach(b=>{ const h=new Date(b.erstellt_am).getHours(); arr[h]+=b.gesamt; });
+    return arr;
+  },[periodeB]);
+  const maxStunde = Math.max(...stunden,1);
 
-  const periodeLabels = {heute:'Heute',woche:'Diese Woche',monat:'Dieser Monat',alles:'Gesamt'};
-  const prevLabels    = {heute:'Gestern',woche:'Letzte Woche',monat:'Letzter Monat',alles:''};
+  // Weekday distribution
+  const wochentage = useMemo(()=>{
+    const LABELS=['Mo','Di','Mi','Do','Fr','Sa','So'];
+    const arr=Array(7).fill(0);
+    allBestellungen.forEach(b=>{ const d=((new Date(b.erstellt_am).getDay()||7)-1); arr[d]+=b.gesamt; });
+    return LABELS.map((l,i)=>({label:l,umsatz:arr[i]}));
+  },[allBestellungen]);
+  const maxWT = Math.max(...wochentage.map(d=>d.umsatz),1);
+
+  // Per-area breakdown (Gesamt mode)
+  const areaBreakdown = useMemo(()=>{
+    if (!gesamt || !allData.length) return [];
+    return allData.map(src=>({
+      label:src.label, color:src.color,
+      umsatz: filterBy((src.data.bestellungen||[]).filter(b=>b.status!=='storniert'),[rs,re]).reduce((s,b)=>s+b.gesamt,0),
+      count:  filterBy((src.data.bestellungen||[]).filter(b=>b.status!=='storniert'),[rs,re]).length,
+    })).sort((a,b)=>b.umsatz-a.umsatz);
+  },[gesamt,allData,rs,re,filterBy]);
+  const maxAreaUmsatz = Math.max(...areaBreakdown.map(d=>d.umsatz),1);
+
+  const periodeLabels = {heute:'Heute',gestern:'Gestern',woche:'Diese Woche',letzteWoche:'Letzte Woche',monat:'Dieser Monat',letzterMonat:'Letzter Monat',quartal:'Quartal',jahr:'Dieses Jahr',alles:'Gesamt',custom:'Benutzerdefiniert'};
 
   const saveMinKarte = () => {
     db.collection(profile||'k21-cafe').doc('data')
@@ -1213,103 +1295,224 @@ const FinanzenView = ({ cafe, toast, profile }) => {
     toast('Gespeichert ✓');
   };
 
-  const exportData = async () => {
-    const ref = db.collection(profile||'k21-cafe').doc('data');
-    const snap = await ref.get();
-    const blob = new Blob([JSON.stringify(snap.exists?snap.data():{},null,2)],{type:'application/json'});
-    const a = document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=`k21-cafe-${Date.now()}.json`; a.click();
+  const exportData = () => {
+    const blob = new Blob([JSON.stringify(cafe,null,2)],{type:'application/json'});
+    const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=`k21-cafe-${profile}-${Date.now()}.json`; a.click();
     toast('Export erfolgreich');
   };
 
-  const Delta = ({val, suffix=''}) => val===null ? null : (
-    <div className={`text-xs font-semibold mt-1 flex items-center gap-0.5 ${val>=0?'text-green-600':'text-red-500'}`}>
+  const Delta = ({val,suffix=''}) => val===null?null:(
+    <div className={`text-xs font-semibold mt-0.5 flex items-center gap-0.5 ${val>=0?'text-emerald-600':'text-red-500'}`}>
       {val>=0?'↑':'↓'} {Math.abs(val).toFixed(1)}{suffix}
     </div>
   );
 
+  const TABS = [{id:'uebersicht',label:'Übersicht'},{id:'produkte',label:'Produkte'},{id:'schichten',label:'Schichten'},{id:'einstellungen',label:'Einstellungen'}];
+
   return (
     <div className="flex flex-col gap-5">
-      {/* Period selector */}
-      <div className="flex flex-wrap gap-2">
-        {Object.entries(periodeLabels).map(([v,l])=>(
-          <button key={v} onClick={()=>setPeriode(v)}
-            className={`pill transition-all ${periode===v?'text-white':'text-slate-600 bg-white border border-black/10'}`}
-            style={periode===v?{background:'#0f172a'}:{}}>
-            {l}
+
+      {/* Controls row */}
+      <div className="flex flex-wrap items-center gap-2">
+        {/* Gesamt toggle */}
+        {profiles && profiles.length > 1 && (
+          <button onClick={()=>setGesamt(g=>!g)}
+            className={`pill transition-all font-semibold ${gesamt?'text-white':'text-slate-600 bg-white border border-black/10'}`}
+            style={gesamt?{background:'#6366f1'}:{}}>
+            🌐 Alle Bereiche {gesamt && allData.length ? `(${allData.length})` : ''}
           </button>
-        ))}
-      </div>
-
-      {/* KPI cards */}
-      <div className="grid gap-4" style={{gridTemplateColumns:'repeat(auto-fill,minmax(170px,1fr))'}}>
-        <div className="glass rounded-2xl p-5 glow">
-          <div className="text-xs text-slate-500 mb-1">Umsatz</div>
-          <div className="text-2xl font-bold text-slate-900">{fmtEur(periodeUmsatz)}</div>
-          {periode!=='alles' && <Delta val={umsatzDelta} suffix="% vs. vorher"/>}
-        </div>
-        <div className="glass rounded-2xl p-5 glow">
-          <div className="text-xs text-slate-500 mb-1">Bestellungen</div>
-          <div className="text-2xl font-bold" style={{color:'#6366f1'}}>{periodeB.length}</div>
-          {periode!=='alles' && countDelta!==null && <Delta val={countDelta===0?0:countDelta} suffix={` vs. ${prevLabels[periode]}`}/>}
-        </div>
-        <div className="glass rounded-2xl p-5 glow">
-          <div className="text-xs text-slate-500 mb-1">Ø Bestellung</div>
-          <div className="text-2xl font-bold" style={{color:'#f59e0b'}}>
-            {periodeB.length>0 ? fmtEur(periodeUmsatz/periodeB.length) : '—'}
-          </div>
-        </div>
-        <div className="glass rounded-2xl p-5 glow">
-          <div className="text-xs text-slate-500 mb-1">Gesamt Umsatz</div>
-          <div className="text-2xl font-bold" style={{color:'#10b981'}}>{fmtEur(allBestellungen.reduce((s,b)=>s+b.gesamt,0))}</div>
-        </div>
-      </div>
-
-      {/* 7-day chart */}
-      <div className="glass rounded-2xl p-5 glow">
-        <h3 className="text-sm font-bold text-slate-700 mb-4">Umsatz letzte 7 Tage</h3>
-        <div className="flex items-end gap-2" style={{height:'110px'}}>
-          {chartData.map((d,i)=>(
-            <div key={i} className="flex-1 flex flex-col items-center gap-1">
-              {d.umsatz>0 && <span className="text-slate-500" style={{fontSize:'8px'}}>{fmtEur(d.umsatz)}</span>}
-              <div style={{width:'100%',height:`${Math.max(4,d.umsatz/maxUmsatz*80)}px`,background:'#6366f1',borderRadius:'4px 4px 0 0',opacity:d.umsatz===0?0.15:1,transition:'height .3s'}}/>
-              <span className="text-slate-400" style={{fontSize:'8px'}}>{d.label}</span>
-            </div>
+        )}
+        <div style={{flex:'1 1 0',minWidth:0}}/>
+        {/* Period filter */}
+        <div className="flex flex-wrap gap-1.5">
+          {Object.entries(periodeLabels).map(([v,l])=>(
+            <button key={v} onClick={()=>{setPeriode(v);}}
+              className={`pill transition-all ${periode===v?'text-white':'text-slate-600 bg-white border border-black/10'}`}
+              style={periode===v?{background:'#0f172a'}:{}} title={l}>
+              {l}
+            </button>
           ))}
         </div>
       </div>
 
-      {/* Zahlungsarten */}
-      {zahlungsBreakdown.length > 0 && (
-        <div className="glass rounded-2xl p-5 glow">
-          <h3 className="text-sm font-bold text-slate-700 mb-3">{periodeLabels[periode]} — Zahlungsarten</h3>
-          <div className="flex flex-col gap-2.5">
-            {zahlungsBreakdown.map(([art,betrag])=>(
-              <div key={art} className="flex items-center gap-3">
-                <span className="text-xs text-slate-500 w-24 truncate">{art}</span>
-                <div className="flex-1 rounded-full overflow-hidden" style={{height:'7px',background:'#f1f5f9'}}>
-                  <div style={{height:'100%',width:`${periodeUmsatz>0?(betrag/periodeUmsatz*100).toFixed(1):0}%`,background:'#6366f1',borderRadius:'9px',transition:'width .4s'}}/>
-                </div>
-                <span className="text-xs font-semibold text-slate-700 w-16 text-right">{fmtEur(betrag)}</span>
-              </div>
-            ))}
+      {/* Custom date range */}
+      {periode==='custom' && (
+        <div className="glass rounded-xl p-3 flex flex-wrap gap-3 items-center">
+          <div className="flex items-center gap-2">
+            <label className="text-xs text-slate-500 font-semibold">Von</label>
+            <input type="date" className={INP_SM} value={customFrom} onChange={e=>setCustomFrom(e.target.value)} style={{width:'140px'}}/>
+          </div>
+          <div className="flex items-center gap-2">
+            <label className="text-xs text-slate-500 font-semibold">Bis</label>
+            <input type="date" className={INP_SM} value={customTo} onChange={e=>setCustomTo(e.target.value)} style={{width:'140px'}}/>
           </div>
         </div>
       )}
 
-      {/* Kategorien */}
-      {katBreakdown.length > 0 && (
-        <div className="glass rounded-2xl p-5 glow">
-          <h3 className="text-sm font-bold text-slate-700 mb-3">{periodeLabels[periode]} — Kategorien</h3>
-          <div className="flex flex-col gap-2.5">
-            {katBreakdown.map(([kat,betrag])=>{
-              const k=(cafe.kategorien||[]).find(x=>x.name===kat);
-              return (
-                <div key={kat} className="flex items-center gap-3">
-                  <span className="text-xs text-slate-500 w-24 truncate">{kat}</span>
-                  <div className="flex-1 rounded-full overflow-hidden" style={{height:'7px',background:'#f1f5f9'}}>
-                    <div style={{height:'100%',width:`${periodeUmsatz>0?(betrag/periodeUmsatz*100).toFixed(1):0}%`,background:k?.farbe||'#8b5cf6',borderRadius:'9px',transition:'width .4s'}}/>
+      {/* Sub-tabs */}
+      <div className="flex gap-1" style={{borderBottom:'2px solid #f1f5f9'}}>
+        {TABS.map(t=>(
+          <button key={t.id} onClick={()=>setTab(t.id)}
+            className="px-4 py-2 text-xs font-semibold transition-all"
+            style={{color:tab===t.id?'#0f172a':'#94a3b8',borderBottom:tab===t.id?'2px solid #0f172a':'2px solid transparent',marginBottom:'-2px'}}>
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      {loadingAll && gesamt && (
+        <div className="text-center py-8 text-slate-400 text-sm">Lade alle Bereiche…</div>
+      )}
+
+      {/* ── ÜBERSICHT ── */}
+      {tab==='uebersicht' && (
+        <div className="flex flex-col gap-5">
+
+          {/* KPI cards */}
+          <div className="grid gap-3" style={{gridTemplateColumns:'repeat(auto-fill,minmax(150px,1fr))'}}>
+            {[
+              {label:'Umsatz',     val:fmtEur(periodeUmsatz), delta:<Delta val={umsatzDelta} suffix="%"/>, col:'#0f172a'},
+              {label:'Bestellungen', val:periodeB.length, delta:<Delta val={countDelta} suffix=" vs. vorher"/>, col:'#6366f1'},
+              {label:'Ø Bestellung', val:periodeB.length?fmtEur(avgBasket):'—', col:'#f59e0b'},
+              {label:'Ø Artikel',  val:periodeB.length?avgItems.toFixed(1):'—', col:'#06b6d4'},
+              {label:'Schichten',  val:periodeSchichten.length, col:'#10b981'},
+              {label:'Stornierungen', val:stornoCount, col:'#ef4444'},
+            ].map(({label,val,delta,col})=>(
+              <div key={label} className="glass rounded-2xl p-4 glow" style={{borderTop:`3px solid ${col}`}}>
+                <div className="text-xs text-slate-400 mb-1">{label}</div>
+                <div className="text-xl font-bold" style={{color:col}}>{val}</div>
+                {delta||null}
+              </div>
+            ))}
+          </div>
+
+          {/* Per-area breakdown (Gesamt only) */}
+          {gesamt && areaBreakdown.length > 1 && (
+            <div className="glass rounded-2xl p-5 glow">
+              <h3 className="text-sm font-bold text-slate-700 mb-4">Bereiche im Vergleich</h3>
+              <div className="flex flex-col gap-3">
+                {areaBreakdown.map(a=>(
+                  <div key={a.label} className="flex items-center gap-3">
+                    <div className="w-24 flex-shrink-0">
+                      <div className="text-xs font-semibold text-slate-700 truncate">{a.label}</div>
+                      <div className="text-xs text-slate-400">{a.count} Best.</div>
+                    </div>
+                    <div className="flex-1 rounded-full overflow-hidden" style={{height:'10px',background:'#f1f5f9'}}>
+                      <div style={{height:'100%',width:`${(a.umsatz/maxAreaUmsatz*100).toFixed(1)}%`,background:a.color||'#6366f1',borderRadius:'9px',transition:'width .4s'}}/>
+                    </div>
+                    <span className="text-sm font-bold text-slate-800 w-20 text-right">{fmtEur(a.umsatz)}</span>
                   </div>
-                  <span className="text-xs font-semibold text-slate-700 w-16 text-right">{fmtEur(betrag)}</span>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Umsatz chart */}
+          <div className="glass rounded-2xl p-5 glow">
+            <h3 className="text-sm font-bold text-slate-700 mb-4">Umsatz letzte {chartDays} Tage</h3>
+            <div className="flex items-end gap-1" style={{height:'120px'}}>
+              {chartData.map((d,i)=>(
+                <div key={i} className="flex-1 flex flex-col items-center gap-1 min-w-0" title={`${d.label}: ${fmtEur(d.umsatz)}`}>
+                  {d.umsatz>0 && <span className="text-slate-400 truncate w-full text-center" style={{fontSize:'7px'}}>{fmtEur(d.umsatz)}</span>}
+                  <div style={{width:'100%',height:`${Math.max(4,d.umsatz/maxChartUmsatz*90)}px`,background:'#6366f1',borderRadius:'4px 4px 0 0',opacity:d.umsatz===0?0.12:1,transition:'height .3s'}}/>
+                  <span className="text-slate-400 truncate w-full text-center" style={{fontSize:'7px'}}>{d.label}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Two-column: Wochentage + Uhrzeiten */}
+          <div className="grid gap-4" style={{gridTemplateColumns:'1fr 1fr'}}>
+            <div className="glass rounded-2xl p-5 glow">
+              <h3 className="text-sm font-bold text-slate-700 mb-3">Wochentage</h3>
+              <div className="flex items-end gap-2" style={{height:'80px'}}>
+                {wochentage.map((d,i)=>(
+                  <div key={i} className="flex-1 flex flex-col items-center gap-1">
+                    <div style={{width:'100%',height:`${Math.max(3,d.umsatz/maxWT*65)}px`,background:'#10b981',borderRadius:'3px 3px 0 0',opacity:d.umsatz===0?0.12:1,transition:'height .3s'}}/>
+                    <span className="text-slate-500" style={{fontSize:'9px'}}>{d.label}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div className="glass rounded-2xl p-5 glow">
+              <h3 className="text-sm font-bold text-slate-700 mb-3">Uhrzeiten</h3>
+              <div className="flex items-end gap-0.5" style={{height:'80px'}}>
+                {stunden.map((v,i)=>(
+                  <div key={i} className="flex-1 flex flex-col items-center" title={`${i}:00 — ${fmtEur(v)}`}>
+                    <div style={{width:'100%',height:`${Math.max(2,v/maxStunde*65)}px`,background:'#f59e0b',borderRadius:'2px 2px 0 0',opacity:v===0?0.1:1,transition:'height .3s'}}/>
+                  </div>
+                ))}
+              </div>
+              <div className="flex justify-between mt-1">
+                <span className="text-slate-400" style={{fontSize:'8px'}}>0h</span>
+                <span className="text-slate-400" style={{fontSize:'8px'}}>12h</span>
+                <span className="text-slate-400" style={{fontSize:'8px'}}>23h</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Zahlungsarten + Kategorien */}
+          <div className="grid gap-4" style={{gridTemplateColumns:'1fr 1fr'}}>
+            {zahlungsBreakdown.length > 0 && (
+              <div className="glass rounded-2xl p-5 glow">
+                <h3 className="text-sm font-bold text-slate-700 mb-3">Zahlungsarten</h3>
+                <div className="flex flex-col gap-2.5">
+                  {zahlungsBreakdown.map(([art,betrag])=>(
+                    <div key={art} className="flex items-center gap-2">
+                      <span className="text-xs text-slate-500 truncate" style={{width:'60px'}}>{art}</span>
+                      <div className="flex-1 rounded-full overflow-hidden" style={{height:'7px',background:'#f1f5f9'}}>
+                        <div style={{height:'100%',width:`${periodeUmsatz>0?(betrag/periodeUmsatz*100).toFixed(1):0}%`,background:'#6366f1',borderRadius:'9px',transition:'width .4s'}}/>
+                      </div>
+                      <span className="text-xs font-semibold text-slate-700 text-right" style={{width:'60px'}}>{fmtEur(betrag)}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+            {katBreakdown.length > 0 && (
+              <div className="glass rounded-2xl p-5 glow">
+                <h3 className="text-sm font-bold text-slate-700 mb-3">Kategorien</h3>
+                <div className="flex flex-col gap-2.5">
+                  {katBreakdown.map(k=>(
+                    <div key={k.name} className="flex items-center gap-2">
+                      <span className="text-xs text-slate-500 truncate" style={{width:'60px'}}>{k.name}</span>
+                      <div className="flex-1 rounded-full overflow-hidden" style={{height:'7px',background:'#f1f5f9'}}>
+                        <div style={{height:'100%',width:`${periodeUmsatz>0?(k.betrag/periodeUmsatz*100).toFixed(1):0}%`,background:k.color,borderRadius:'9px',transition:'width .4s'}}/>
+                      </div>
+                      <span className="text-xs font-semibold text-slate-700 text-right" style={{width:'60px'}}>{fmtEur(k.betrag)}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ── PRODUKTE ── */}
+      {tab==='produkte' && (
+        <div className="glass rounded-2xl p-5 glow">
+          <h3 className="text-sm font-bold text-slate-700 mb-4">Top Produkte — {periodeLabels[periode]}</h3>
+          {topProdukte.length===0 && <div className="text-xs text-slate-400 text-center py-8">Keine Daten im Zeitraum</div>}
+          <div className="flex flex-col">
+            {topProdukte.map((p,i)=>{
+              const maxB=topProdukte[0]?.betrag||1;
+              return (
+                <div key={p.name} className="flex items-center gap-3 py-2.5" style={{borderBottom:'1px solid rgba(0,0,0,0.05)'}}>
+                  <span className="text-xs font-bold text-slate-400 w-5 text-center">{i+1}</span>
+                  <span className="text-base">{p.emoji}</span>
+                  <div style={{flex:1}}>
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-sm font-semibold text-slate-800">{p.name}</span>
+                      <span className="text-sm font-bold text-slate-900">{fmtEur(p.betrag)}</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <div className="flex-1 rounded-full overflow-hidden" style={{height:'5px',background:'#f1f5f9'}}>
+                        <div style={{height:'100%',width:`${(p.betrag/maxB*100).toFixed(1)}%`,background:'#6366f1',borderRadius:'9px'}}/>
+                      </div>
+                      <span className="text-xs text-slate-400">{p.count}×</span>
+                    </div>
+                  </div>
                 </div>
               );
             })}
@@ -1317,41 +1520,77 @@ const FinanzenView = ({ cafe, toast, profile }) => {
         </div>
       )}
 
-      {/* Schichten */}
-      <div className="glass rounded-2xl p-5 glow">
-        <h3 className="text-sm font-bold text-slate-700 mb-3">Schichten</h3>
-        {schichten.length===0 && <div className="text-xs text-slate-400">Keine Schichten</div>}
-        <div className="flex flex-col">
-          {schichten.map(s=>(
-            <div key={s.id} className="flex items-center justify-between py-2.5" style={{borderBottom:'1px solid rgba(0,0,0,0.05)'}}>
-              <div>
-                <div className="text-sm font-semibold text-slate-700">{s.kassiererName}</div>
-                <div className="text-xs text-slate-400">{fmtDateTime(s.start)}{s.ende?` – ${fmtTime(s.ende)}`:' (aktiv)'}</div>
+      {/* ── SCHICHTEN ── */}
+      {tab==='schichten' && (
+        <div className="flex flex-col gap-4">
+          {/* Schicht-KPIs */}
+          <div className="grid gap-3" style={{gridTemplateColumns:'repeat(auto-fill,minmax(150px,1fr))'}}>
+            {[
+              {label:'Schichten gesamt', val:periodeSchichten.length, col:'#10b981'},
+              {label:'Ø Umsatz/Schicht', val:periodeSchichten.length?fmtEur(periodeSchichten.reduce((s,x)=>s+(x.umsatz||0),0)/periodeSchichten.length):'—', col:'#6366f1'},
+              {label:'Beste Schicht',    val:periodeSchichten.length?fmtEur(Math.max(...periodeSchichten.map(x=>x.umsatz||0))):'—', col:'#f59e0b'},
+              {label:'Ø Dauer',          val: (()=>{ const done=periodeSchichten.filter(s=>s.ende); if(!done.length) return '—'; const avg=done.reduce((s,x)=>s+(new Date(x.ende)-new Date(x.start)),0)/done.length; const h=Math.floor(avg/3600000); const m=Math.floor((avg%3600000)/60000); return `${h}h ${m}m`; })(), col:'#06b6d4'},
+            ].map(({label,val,col})=>(
+              <div key={label} className="glass rounded-2xl p-4 glow" style={{borderTop:`3px solid ${col}`}}>
+                <div className="text-xs text-slate-400 mb-1">{label}</div>
+                <div className="text-xl font-bold" style={{color:col}}>{val}</div>
               </div>
-              <div className="text-right">
-                <div className="text-sm font-bold text-slate-800">{fmtEur(s.umsatz||0)}</div>
-                <div className="text-xs text-slate-400">{s.bestellungen_count||0} Bestell.</div>
-              </div>
+            ))}
+          </div>
+          <div className="glass rounded-2xl p-5 glow">
+            <h3 className="text-sm font-bold text-slate-700 mb-3">Schichten — {periodeLabels[periode]}</h3>
+            {periodeSchichten.length===0 && <div className="text-xs text-slate-400 text-center py-8">Keine Schichten im Zeitraum</div>}
+            <div className="flex flex-col">
+              {periodeSchichten.slice(0,30).map(s=>(
+                <div key={s.id} className="flex items-center justify-between py-3" style={{borderBottom:'1px solid rgba(0,0,0,0.05)'}}>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-semibold text-slate-700">{s.kassiererName}</span>
+                      {!s.ende && <span className="pill text-xs" style={{background:'#d1fae5',color:'#065f46'}}>Aktiv</span>}
+                      {gesamt && s._area && <span className="pill text-xs" style={{background:'#f1f5f9',color:'#475569'}}>{s._area}</span>}
+                    </div>
+                    <div className="text-xs text-slate-400 mt-0.5">
+                      {fmtDateTime(s.start)}{s.ende ? ` – ${fmtTime(s.ende)}` : ''}
+                      {s.kassenstart!=null && ` · Start: ${fmtEur(s.kassenstart||0)}`}
+                      {s.kassenende!=null && s.ende && ` · Ende: ${fmtEur(s.kassenende||0)}`}
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <div className="text-sm font-bold text-slate-800">{fmtEur(s.umsatz||0)}</div>
+                    <div className="text-xs text-slate-400">{s.bestellungen_count||0} Best.</div>
+                  </div>
+                </div>
+              ))}
             </div>
-          ))}
+          </div>
         </div>
-      </div>
+      )}
 
-      {/* Einstellungen */}
-      <div className="glass rounded-2xl p-5 glow">
-        <h3 className="text-sm font-bold text-slate-700 mb-3">Einstellungen</h3>
-        <label className="text-xs font-semibold text-slate-600 mb-1 block">Mindestbetrag Kartenzahlung (€)</label>
-        <div className="flex gap-2 mb-4">
-          <input type="number" className={INP} value={minKarte} onChange={e=>setMinKarte(e.target.value)} step="1" min="0"/>
-          <button onClick={saveMinKarte}
-            className="px-4 py-2.5 rounded-xl text-sm font-semibold text-white flex-shrink-0 disabled:opacity-40" style={{background:'#0f172a'}}>
-            Speichern
-          </button>
+      {/* ── EINSTELLUNGEN ── */}
+      {tab==='einstellungen' && (
+        <div className="flex flex-col gap-4 max-w-md">
+          <div className="glass rounded-2xl p-5 glow">
+            <h3 className="text-sm font-bold text-slate-700 mb-4">Kassen-Einstellungen</h3>
+            <label className="text-xs font-semibold text-slate-600 mb-1 block">Mindestbetrag Kartenzahlung (€)</label>
+            <div className="flex gap-2 mb-2">
+              <input type="number" className={INP} value={minKarte} onChange={e=>setMinKarte(e.target.value)} step="1" min="0"/>
+              <button onClick={saveMinKarte}
+                className="px-4 py-2.5 rounded-xl text-sm font-semibold text-white flex-shrink-0" style={{background:'#0f172a'}}>
+                Speichern
+              </button>
+            </div>
+            <p className="text-xs text-slate-400">Bestellungen unter diesem Betrag können nicht per Karte bezahlt werden.</p>
+          </div>
+          <div className="glass rounded-2xl p-5 glow">
+            <h3 className="text-sm font-bold text-slate-700 mb-3">Daten-Export</h3>
+            <p className="text-xs text-slate-400 mb-3">Exportiert alle Daten dieses Bereichs als JSON-Datei.</p>
+            <button onClick={exportData} className="w-full py-2.5 rounded-xl text-sm font-semibold flex items-center justify-center gap-2 border border-black/10 hover:bg-black/5 transition-all">
+              <SI p={IC.download} size={14}/>JSON Export — {profile}
+            </button>
+          </div>
         </div>
-        <button onClick={exportData} className="w-full py-2.5 rounded-xl text-sm font-semibold flex items-center justify-center gap-2 border border-black/10 hover:bg-black/5 transition-all">
-          <SI p={IC.download} size={14}/>JSON Export
-        </button>
-      </div>
+      )}
+
     </div>
   );
 };
@@ -1623,7 +1862,7 @@ const App = () => {
     if (activePage==='schicht')          return <SchichtView cafe={cafe} user={user} toast={toast} activeSchicht={activeSchicht} setActiveSchicht={setActiveSchicht} profile={profile}/>;
     if (activePage==='produkte')         return <ProdukteView cafe={cafe} user={user} toast={toast} profile={profile}/>;
     if (activePage==='zahlungsmethoden') return <ZahlungsMethodenView cafe={cafe} toast={toast} profile={profile}/>;
-    if (activePage==='finanzen')         return <FinanzenView cafe={cafe} toast={toast} profile={profile}/>;
+    if (activePage==='finanzen')         return <FinanzenView cafe={cafe} toast={toast} profile={profile} profiles={profiles} user={user}/>;
     if (activePage==='personen')         return <PersonenView toast={toast} profile={profile}/>;
     return null;
   };
