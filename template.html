@@ -270,7 +270,7 @@ const LoginView = ({ onLogin, profiles }) => {
     <div style={{minHeight:'100vh',display:'flex',alignItems:'center',justifyContent:'center',padding:'16px',background:'#f8fafc'}}>
       <div style={{width:'100%',maxWidth:'320px'}}>
         <div style={{textAlign:'center',marginBottom:'32px'}}>
-          <img src="/logo.png" style={{width:72,height:72,margin:'0 auto 20px',display:'block'}} alt="K21"/>
+          <img src="/logo.png" style={{width:80,height:80,margin:'0 auto 16px',display:'block',objectFit:'contain',mixBlendMode:'multiply'}} alt="K21"/>
           <h1 style={{fontFamily:'Montserrat,sans-serif',fontWeight:900,fontSize:28,color:'#0f172a',letterSpacing:'-0.04em',margin:0,lineHeight:1}}>K21 Café</h1>
         </div>
 
@@ -1322,6 +1322,15 @@ const FinanzenView = ({ cafe, toast, profile, profiles, user }) => {
   const [customTo, setCustomTo]     = useState('');
   const [tab, setTab]          = useState('uebersicht');
   const [minKarte, setMinKarte] = useState((cafe.einstellungen||{}).min_karten_betrag||10);
+  // Vergleich state
+  const [cmpMode,    setCmpMode]    = useState('zeitraum'); // 'zeitraum' | 'produkt'
+  const [cmpA,       setCmpA]       = useState('woche');
+  const [cmpB,       setCmpB]       = useState('monat');
+  const [cmpFromA,   setCmpFromA]   = useState('');
+  const [cmpToA,     setCmpToA]     = useState('');
+  const [cmpFromB,   setCmpFromB]   = useState('');
+  const [cmpToB,     setCmpToB]     = useState('');
+  const [selProdukte,setSelProdukte]= useState([]);
 
   // Load all areas for Gesamt view
   useEffect(() => {
@@ -1465,7 +1474,7 @@ const FinanzenView = ({ cafe, toast, profile, profiles, user }) => {
   },[gesamt,allData,rs,re,filterBy]);
   const maxAreaUmsatz = Math.max(...areaBreakdown.map(d=>d.umsatz),1);
 
-  const periodeLabels = {heute:'Heute',gestern:'Gestern',woche:'Diese Woche',letzteWoche:'Letzte Woche',monat:'Dieser Monat',letzterMonat:'Letzter Monat',quartal:'Quartal',jahr:'Dieses Jahr',alles:'Gesamt',custom:'Benutzerdefiniert'};
+  const periodeLabels = {woche:'Diese Woche',monat:'Dieser Monat',jahr:'Dieses Jahr',custom:'Benutzerdefiniert'};
 
   const saveMinKarte = () => {
     db.collection(profile||'k21-cafe').doc('data')
@@ -1486,14 +1495,79 @@ const FinanzenView = ({ cafe, toast, profile, profiles, user }) => {
     </div>
   );
 
-  const TABS = [{id:'uebersicht',label:'Übersicht'},{id:'produkte',label:'Produkte'},{id:'schichten',label:'Schichten'},{id:'einstellungen',label:'Einstellungen'}];
+  const TABS = [{id:'uebersicht',label:'Übersicht'},{id:'vergleich',label:'Vergleich'},{id:'produkte',label:'Produkte'},{id:'schichten',label:'Schichten'},{id:'einstellungen',label:'Einstellungen'}];
+
+  // ── Vergleich helpers ──────────────────────────────────────────────────────
+  const getRangeFor = useCallback((p, fromC, toC) => {
+    const now = new Date();
+    const today = new Date(now.getFullYear(),now.getMonth(),now.getDate());
+    if (p==='woche')  { const m=new Date(today); m.setDate(today.getDate()-(today.getDay()||7)+1); return [m,new Date(m.getTime()+7*86400000)]; }
+    if (p==='monat')  return [new Date(now.getFullYear(),now.getMonth(),1),new Date(now.getFullYear(),now.getMonth()+1,1)];
+    if (p==='jahr')   return [new Date(now.getFullYear(),0,1),new Date(now.getFullYear()+1,0,1)];
+    if (p==='custom') {
+      const s = fromC ? new Date(fromC) : new Date(0);
+      const e = toC   ? new Date(new Date(toC).getTime()+86400000) : new Date(now.getTime()+86400000);
+      return [s,e];
+    }
+    return [new Date(0), new Date(now.getTime()+86400000)];
+  }, []);
+
+  const cmpPeriodLabels = {woche:'Diese Woche',monat:'Dieser Monat',jahr:'Dieses Jahr',custom:'Benutzerdefiniert'};
+
+  const [rasA,reA] = useMemo(()=>getRangeFor(cmpA,cmpFromA,cmpToA),[cmpA,cmpFromA,cmpToA,getRangeFor]);
+  const [rasB,reB] = useMemo(()=>getRangeFor(cmpB,cmpFromB,cmpToB),[cmpB,cmpFromB,cmpToB,getRangeFor]);
+
+  const cmpBestellungenA = useMemo(()=>filterBy(allBestellungen,[rasA,reA]),[allBestellungen,rasA,reA,filterBy]);
+  const cmpBestellungenB = useMemo(()=>filterBy(allBestellungen,[rasB,reB]),[allBestellungen,rasB,reB,filterBy]);
+
+  const cmpStats = useCallback((bestellungen) => {
+    const umsatz = bestellungen.reduce((s,b)=>s+b.gesamt,0);
+    const count  = bestellungen.length;
+    const avg    = count ? umsatz/count : 0;
+    const produktMap = {};
+    bestellungen.forEach(b=>(b.artikel||[]).forEach(a=>{
+      if (!produktMap[a.name]) produktMap[a.name]={name:a.name,betrag:0,count:0};
+      produktMap[a.name].betrag+=a.preis*a.menge; produktMap[a.name].count+=a.menge;
+    }));
+    const topP = Object.values(produktMap).sort((a,b)=>b.betrag-a.betrag).slice(0,5);
+    const katMap = {};
+    bestellungen.forEach(b=>(b.artikel||[]).forEach(a=>{
+      const kat=(cafe.kategorien||[]).find(k=>k.id===a.kategorie_id);
+      const key=kat?.name||'Sonstige'; const col=kat?.farbe||'#8b5cf6';
+      if(!katMap[key]) katMap[key]={betrag:0,color:col};
+      katMap[key].betrag+=a.preis*a.menge;
+    }));
+    const topK = Object.entries(katMap).map(([k,v])=>({name:k,...v})).sort((a,b)=>b.betrag-a.betrag);
+    return {umsatz,count,avg,topP,topK};
+  }, [cafe.kategorien]);
+
+  const statsA = useMemo(()=>cmpStats(cmpBestellungenA),[cmpBestellungenA,cmpStats]);
+  const statsB = useMemo(()=>cmpStats(cmpBestellungenB),[cmpBestellungenB,cmpStats]);
+
+  // Produkt-Vergleich: for each selected product, get revenue+count per period
+  const allProdukteNamen = useMemo(()=>{
+    const map={};
+    allBestellungen.forEach(b=>(b.artikel||[]).forEach(a=>{ map[a.name]=true; }));
+    return Object.keys(map).sort();
+  },[allBestellungen]);
+
+  const prodVglData = useMemo(()=>{
+    if (!selProdukte.length) return [];
+    return selProdukte.map(name => {
+      const [s,e] = getRangeFor(periode, customFrom, customTo);
+      const filtered = filterBy(allBestellungen,[s,e]);
+      let betrag=0, count=0;
+      filtered.forEach(b=>(b.artikel||[]).forEach(a=>{ if(a.name===name){betrag+=a.preis*a.menge; count+=a.menge;} }));
+      return {name, betrag, count};
+    }).sort((a,b)=>b.betrag-a.betrag);
+  },[selProdukte,allBestellungen,periode,customFrom,customTo,getRangeFor,filterBy]);
+  const maxProdVgl = Math.max(...prodVglData.map(d=>d.betrag),1);
 
   return (
     <div className="flex flex-col gap-5">
 
       {/* Controls row */}
       <div className="flex flex-wrap items-center gap-2">
-        {/* Gesamt toggle */}
         {profiles && profiles.length > 1 && (
           <button onClick={()=>setGesamt(g=>!g)}
             className={`pill transition-all font-semibold ${gesamt?'text-white':'text-slate-600 bg-white border border-black/10'}`}
@@ -1502,20 +1576,20 @@ const FinanzenView = ({ cafe, toast, profile, profiles, user }) => {
           </button>
         )}
         <div style={{flex:'1 1 0',minWidth:0}}/>
-        {/* Period filter */}
-        <div className="flex flex-wrap gap-1.5">
-          {Object.entries(periodeLabels).map(([v,l])=>(
-            <button key={v} onClick={()=>{setPeriode(v);}}
-              className={`pill transition-all ${periode===v?'text-white':'text-slate-600 bg-white border border-black/10'}`}
-              style={periode===v?{background:'#0f172a'}:{}} title={l}>
-              {l}
-            </button>
-          ))}
-        </div>
+        {tab !== 'vergleich' && (
+          <div className="flex gap-1.5">
+            {Object.entries(periodeLabels).map(([v,l])=>(
+              <button key={v} onClick={()=>setPeriode(v)}
+                className={`pill transition-all ${periode===v?'text-white':'text-slate-600 bg-white border border-black/10'}`}
+                style={periode===v?{background:'#0f172a'}:{}}>
+                {l}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
-      {/* Custom date range */}
-      {periode==='custom' && (
+      {tab !== 'vergleich' && periode==='custom' && (
         <div className="glass rounded-xl p-3 flex flex-wrap gap-3 items-center">
           <div className="flex items-center gap-2">
             <label className="text-xs text-slate-500 font-semibold">Von</label>
@@ -1665,6 +1739,223 @@ const FinanzenView = ({ cafe, toast, profile, profiles, user }) => {
               </div>
             )}
           </div>
+        </div>
+      )}
+
+      {/* ── VERGLEICH ── */}
+      {tab==='vergleich' && (
+        <div className="space-y-4">
+          {/* Mode toggle */}
+          <div className="glass rounded-2xl p-4">
+            <div className="flex gap-2">
+              {[{id:'zeitraum',label:'Zeiträume vergleichen'},{id:'produkt',label:'Produkte vergleichen'}].map(m=>(
+                <button key={m.id} onClick={()=>setCmpMode(m.id)}
+                  className={`px-4 py-2 rounded-xl text-xs font-semibold transition-all ${cmpMode===m.id?'bg-black text-white':'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>
+                  {m.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {cmpMode==='zeitraum' && (() => {
+            const cmpPeriodLabels = {woche:'Diese Woche',monat:'Dieser Monat',jahr:'Dieses Jahr',custom:'Benutzerdefiniert'};
+            const PeriodPicker = ({val, setVal, from, setFrom, to, setTo, label}) => (
+              <div className="flex-1 min-w-0">
+                <div className="text-xs font-bold text-slate-500 mb-2 uppercase tracking-wide">{label}</div>
+                <div className="flex flex-wrap gap-1 mb-2">
+                  {Object.entries(cmpPeriodLabels).map(([v,l])=>(
+                    <button key={v} onClick={()=>setVal(v)}
+                      className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-all ${val===v?'bg-black text-white':'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>
+                      {l}
+                    </button>
+                  ))}
+                </div>
+                {val==='custom' && (
+                  <div className="flex gap-2 mt-1">
+                    <input type="date" value={from} onChange={e=>setFrom(e.target.value)}
+                      className="flex-1 border border-slate-200 rounded-lg px-2 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-black"/>
+                    <input type="date" value={to} onChange={e=>setTo(e.target.value)}
+                      className="flex-1 border border-slate-200 rounded-lg px-2 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-black"/>
+                  </div>
+                )}
+              </div>
+            );
+            const diff = (a,b,fmt) => {
+              if (a===0&&b===0) return null;
+              const d = b-a; const pct = a===0?null:Math.round(d/a*100);
+              const col = d>=0?'text-emerald-600':'text-red-500';
+              return <span className={`text-xs font-semibold ${col}`}>{d>=0?'+':''}{fmt(d)}{pct!==null?` (${pct>0?'+':''}${pct}%)`:''}</span>;
+            };
+            const fmtE = v => `${v>=0?'':'−'}${Math.abs(v).toFixed(2)} €`;
+            const fmtN = v => `${v>=0?'+':'-'}${Math.abs(v)}`;
+            return (
+              <div className="space-y-4">
+                {/* Period pickers */}
+                <div className="glass rounded-2xl p-5">
+                  <div className="flex gap-6 flex-wrap">
+                    <PeriodPicker val={cmpA} setVal={setCmpA} from={cmpFromA} setFrom={setCmpFromA} to={cmpToA} setTo={setCmpToA} label="Zeitraum A"/>
+                    <div className="flex items-center self-start mt-7 text-slate-400 font-bold text-lg">vs</div>
+                    <PeriodPicker val={cmpB} setVal={setCmpB} from={cmpFromB} setFrom={setCmpFromB} to={cmpToB} setTo={setCmpToB} label="Zeitraum B"/>
+                  </div>
+                </div>
+
+                {/* KPI comparison */}
+                <div className="grid grid-cols-3 gap-3">
+                  {[
+                    {label:'Umsatz', va:statsA.umsatz, vb:statsB.umsatz, fmt:v=>`${v.toFixed(2)} €`},
+                    {label:'Bestellungen', va:statsA.count, vb:statsB.count, fmt:v=>`${v}`},
+                    {label:'Ø Bestellung', va:statsA.avg, vb:statsB.avg, fmt:v=>`${v.toFixed(2)} €`},
+                  ].map(({label,va,vb,fmt})=>(
+                    <div key={label} className="glass rounded-2xl p-4">
+                      <div className="text-xs text-slate-500 mb-2 font-semibold uppercase tracking-wide">{label}</div>
+                      <div className="flex justify-between items-end gap-2">
+                        <div>
+                          <div className="text-xs text-slate-400 mb-0.5">A</div>
+                          <div className="text-sm font-bold text-slate-800">{fmt(va)}</div>
+                        </div>
+                        <div className="text-right">
+                          <div className="text-xs text-slate-400 mb-0.5">B</div>
+                          <div className="text-sm font-bold text-slate-800">{fmt(vb)}</div>
+                        </div>
+                      </div>
+                      <div className="mt-2 pt-2 border-t border-slate-100">
+                        {diff(va,vb,label==='Bestellungen'?fmtN:fmtE) || <span className="text-xs text-slate-400">Keine Daten</span>}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Top products comparison */}
+                <div className="glass rounded-2xl p-5">
+                  <h3 className="text-sm font-bold text-slate-700 mb-4">Top Produkte</h3>
+                  {statsA.topP.length===0&&statsB.topP.length===0
+                    ? <div className="text-xs text-slate-400 text-center py-4">Keine Daten</div>
+                    : (() => {
+                        const allN = [...new Set([...statsA.topP.map(p=>p.name),...statsB.topP.map(p=>p.name)])].slice(0,8);
+                        const mapA = Object.fromEntries(statsA.topP.map(p=>[p.name,p]));
+                        const mapB = Object.fromEntries(statsB.topP.map(p=>[p.name,p]));
+                        const maxV = Math.max(...allN.flatMap(n=>[mapA[n]?.betrag||0,mapB[n]?.betrag||0]),1);
+                        return (
+                          <div className="space-y-3">
+                            {allN.map(name=>{
+                              const a = mapA[name]; const b = mapB[name];
+                              const pctA = ((a?.betrag||0)/maxV*100).toFixed(1);
+                              const pctB = ((b?.betrag||0)/maxV*100).toFixed(1);
+                              return (
+                                <div key={name}>
+                                  <div className="flex justify-between text-xs text-slate-600 mb-1">
+                                    <span className="font-medium truncate max-w-[140px]">{name}</span>
+                                    <div className="flex gap-3 text-slate-400">
+                                      <span>A: {a?`${a.betrag.toFixed(2)} €`:'-'}</span>
+                                      <span>B: {b?`${b.betrag.toFixed(2)} €`:'-'}</span>
+                                    </div>
+                                  </div>
+                                  <div className="flex flex-col gap-0.5">
+                                    <div className="h-2 rounded-full bg-black" style={{width:`${pctA}%`,minWidth:'2px'}}/>
+                                    <div className="h-2 rounded-full bg-slate-400" style={{width:`${pctB}%`,minWidth:'2px'}}/>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                            <div className="flex gap-4 mt-2 text-xs text-slate-400">
+                              <span className="flex items-center gap-1"><span className="inline-block w-3 h-2 rounded-sm bg-black"/>{cmpPeriodLabels[cmpA]}</span>
+                              <span className="flex items-center gap-1"><span className="inline-block w-3 h-2 rounded-sm bg-slate-400"/>{cmpPeriodLabels[cmpB]}</span>
+                            </div>
+                          </div>
+                        );
+                      })()
+                  }
+                </div>
+
+                {/* Category comparison */}
+                {(statsA.topK.length>0||statsB.topK.length>0) && (
+                  <div className="glass rounded-2xl p-5">
+                    <h3 className="text-sm font-bold text-slate-700 mb-4">Kategorien</h3>
+                    {(() => {
+                      const allK = [...new Set([...statsA.topK.map(k=>k.name),...statsB.topK.map(k=>k.name)])];
+                      const mapA = Object.fromEntries(statsA.topK.map(k=>[k.name,k]));
+                      const mapB = Object.fromEntries(statsB.topK.map(k=>[k.name,k]));
+                      const maxV = Math.max(...allK.flatMap(n=>[mapA[n]?.betrag||0,mapB[n]?.betrag||0]),1);
+                      return (
+                        <div className="space-y-3">
+                          {allK.map(name=>{
+                            const a = mapA[name]; const b = mapB[name];
+                            const pctA = ((a?.betrag||0)/maxV*100).toFixed(1);
+                            const pctB = ((b?.betrag||0)/maxV*100).toFixed(1);
+                            return (
+                              <div key={name}>
+                                <div className="flex justify-between text-xs text-slate-600 mb-1">
+                                  <span className="font-medium">{name}</span>
+                                  <div className="flex gap-3 text-slate-400">
+                                    <span>A: {a?`${a.betrag.toFixed(2)} €`:'-'}</span>
+                                    <span>B: {b?`${b.betrag.toFixed(2)} €`:'-'}</span>
+                                  </div>
+                                </div>
+                                <div className="flex flex-col gap-0.5">
+                                  <div className="h-2 rounded-full bg-black" style={{width:`${pctA}%`,minWidth:'2px'}}/>
+                                  <div className="h-2 rounded-full bg-slate-400" style={{width:`${pctB}%`,minWidth:'2px'}}/>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      );
+                    })()}
+                  </div>
+                )}
+              </div>
+            );
+          })()}
+
+          {cmpMode==='produkt' && (
+            <div className="space-y-4">
+              {/* Product selector */}
+              <div className="glass rounded-2xl p-5">
+                <h3 className="text-sm font-bold text-slate-700 mb-3">Produkte auswählen</h3>
+                <div className="flex flex-wrap gap-2">
+                  {allProdukteNamen.map(name=>{
+                    const sel = selProdukte.includes(name);
+                    return (
+                      <button key={name} onClick={()=>setSelProdukte(sel?selProdukte.filter(p=>p!==name):[...selProdukte,name])}
+                        className={`px-3 py-1.5 rounded-xl text-xs font-medium transition-all ${sel?'bg-black text-white':'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>
+                        {name}
+                      </button>
+                    );
+                  })}
+                  {allProdukteNamen.length===0 && <div className="text-xs text-slate-400">Keine Produkte im Zeitraum</div>}
+                </div>
+                {selProdukte.length>0 && (
+                  <button onClick={()=>setSelProdukte([])} className="mt-3 text-xs text-slate-400 hover:text-slate-600">Auswahl leeren</button>
+                )}
+              </div>
+
+              {/* Bar chart */}
+              {prodVglData.length>0 && (
+                <div className="glass rounded-2xl p-5">
+                  <h3 className="text-sm font-bold text-slate-700 mb-4">Umsatz im Zeitraum — {periodeLabels[periode]}</h3>
+                  <div className="space-y-4">
+                    {prodVglData.map(d=>(
+                      <div key={d.name}>
+                        <div className="flex justify-between text-xs mb-1">
+                          <span className="font-medium text-slate-700 truncate max-w-[180px]">{d.name}</span>
+                          <span className="text-slate-500">{d.betrag.toFixed(2)} € · {d.count}×</span>
+                        </div>
+                        <div className="h-4 bg-slate-100 rounded-full overflow-hidden">
+                          <div className="h-full bg-black rounded-full transition-all" style={{width:`${(d.betrag/maxProdVgl*100).toFixed(1)}%`,minWidth:d.betrag>0?'4px':'0'}}/>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {selProdukte.length>0 && prodVglData.length===0 && (
+                <div className="glass rounded-2xl p-8 text-center text-xs text-slate-400">Keine Daten für den gewählten Zeitraum</div>
+              )}
+              {selProdukte.length===0 && (
+                <div className="glass rounded-2xl p-8 text-center text-xs text-slate-400">Produkte oben auswählen um Vergleich zu starten</div>
+              )}
+            </div>
+          )}
         </div>
       )}
 
@@ -2054,7 +2345,7 @@ const App = () => {
         <div style={{maxWidth:'1400px',margin:'0 auto',padding:'0 20px',height:'56px',display:'flex',alignItems:'center',gap:'16px'}}>
           {/* Logo */}
           <div className="flex items-center gap-2 flex-shrink-0">
-            <img src="/logo.png" style={{width:30,height:30,filter:'invert(1)'}} alt="K21"/>
+            <img src="/logo.png" style={{width:30,height:30,filter:'invert(1)',mixBlendMode:'screen'}} alt="K21"/>
             <span className="text-white font-bold text-sm hidden sm:block">K21 Café</span>
           </div>
 
