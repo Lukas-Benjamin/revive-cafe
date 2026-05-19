@@ -152,9 +152,9 @@ const DEFAULT_CAFE = () => ({
 const can = (role, action) => {
   if (!role) return false;
   const map = {
-    kasse:             ['teamleiter','kassierer'],
-    bestellungen:      ['teamleiter','kassierer','barista','finanzen'],
-    schicht:           ['teamleiter','kassierer'],
+    kasse:             ['owner','admin','teamleiter','kassierer'],
+    bestellungen:      ['owner','admin','teamleiter','kassierer','barista','finanzen'],
+    schicht:           ['owner','admin','teamleiter','kassierer'],
     produkte:          ['owner','admin','teamleiter'],
     zahlungsmethoden:  ['owner','admin'],
     finanzen:          ['owner','admin','finanzen','teamleiter'],
@@ -2310,12 +2310,16 @@ const App = () => {
   const [headerEditName, setHeaderEditName]   = useState('');
   const [headerEditColor, setHeaderEditColor] = useState('#8b5cf6');
 
-  // Load profiles on mount
+  // Load profiles — realtime so all devices stay in sync
   useEffect(() => {
-    db.collection('config').doc('cafe-profiles').get().then(snap => {
+    const unsub = db.collection('config').doc('cafe-profiles').onSnapshot(snap => {
       const d = snap.data()?.data;
-      if (d && d.length) { setProfiles(d); CAFE_PROFILES = d; setProfile(d[0].id); }
-    }).catch(()=>{});
+      if (d && d.length) {
+        setProfiles(d); CAFE_PROFILES = d;
+        setProfile(prev => d.find(p=>p.id===prev) ? prev : d[0].id);
+      }
+    }, ()=>{});
+    return () => unsub();
   }, []);
 
   // Firestore listener
@@ -2359,7 +2363,13 @@ const App = () => {
     toast(headerEdit==='new' ? 'Bereich erstellt ✓' : 'Bereich umbenannt ✓');
   };
 
-  if (!user) return <LoginView onLogin={(u, pid) => { setUser(u); if (pid) setProfile(pid); }} profiles={profiles}/>;
+  if (!user) return <LoginView onLogin={(u, pid) => {
+    setUser(u);
+    // Start on first profile the user has access to
+    const accessible = profiles.filter(p => getAreaAccess(u, p.id) !== 'none');
+    const startProfile = accessible.find(p=>p.id===pid) || accessible[0];
+    if (startProfile) setProfile(startProfile.id);
+  }} profiles={profiles}/>;
 
   const visibleNav = NAV_ITEMS.filter(n=>can(user.role,n.perm));
 
@@ -2391,9 +2401,9 @@ const App = () => {
             <span className="text-white font-bold text-sm hidden sm:block">K21 Café</span>
           </div>
 
-          {/* Area pills – centered */}
+          {/* Area pills – centered, filtered by areaAccess */}
           <div className="flex gap-1 mx-auto items-center flex-wrap justify-center">
-            {profiles.map(pp => (
+            {profiles.filter(pp => getAreaAccess(user, pp.id) !== 'none').map(pp => (
               <div key={pp.id} className="relative flex items-center gap-0.5">
                 <button onClick={()=>setProfile(pp.id)}
                   className="px-3 py-1.5 text-xs font-bold transition-all"
