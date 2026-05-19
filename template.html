@@ -12,6 +12,7 @@
     @font-face { font-family: 'Gesta'; src: url('/fonts/GestaMedium.otf') format('opentype'); font-weight: 600; font-style: normal; font-display: swap; }
   </style>
   <style>__TAILWIND_CSS__</style>
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
   <script crossorigin src="https://unpkg.com/react@18.2.0/umd/react.production.min.js"></script>
   <script crossorigin src="https://unpkg.com/react-dom@18.2.0/umd/react-dom.production.min.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
@@ -1539,7 +1540,128 @@ const FinanzenView = ({ cafe, toast, profile, profiles, user }) => {
     </div>
   );
 
-  const TABS = [{id:'uebersicht',label:'Übersicht'},{id:'vergleich',label:'Vergleich'},{id:'produkte',label:'Produkte'},{id:'schichten',label:'Schichten'},{id:'einstellungen',label:'Einstellungen'}];
+  const TABS = [{id:'uebersicht',label:'Übersicht'},{id:'vergleich',label:'Vergleich'},{id:'produkte',label:'Produkte'},{id:'schichten',label:'Schichten'}];
+
+  const periodLabel = periodeLabels[periode] || 'Export';
+
+  const exportExcel = () => {
+    const wb = XLSX.utils.book_new();
+    const fmtD = d => d ? new Date(d).toLocaleString('de-DE') : '';
+    const fmtE = v => parseFloat(v.toFixed(2));
+
+    // Sheet 1: Übersicht
+    const ov = [
+      ['K21 Café — Finanzen Export'],
+      ['Zeitraum:', periodLabel],
+      ['Exportiert:', new Date().toLocaleString('de-DE')],
+      [],
+      ['Kennzahl','Wert'],
+      ['Umsatz (€)', fmtE(periodeUmsatz)],
+      ['Bestellungen', periodeB.length],
+      ['Ø Bestellung (€)', fmtE(avgBasket)],
+      ['Ø Artikel/Bestellung', fmtE(avgItems)],
+      ['Stornierungen', stornoCount],
+      [],
+      ['Zahlungsart','Betrag (€)'],
+      ...zahlungsBreakdown.map(([k,v])=>[k, fmtE(v)]),
+      [],
+      ['Kategorie','Umsatz (€)','Stück'],
+      ...katBreakdown.map(k=>[k.name, fmtE(k.betrag), k.count]),
+    ];
+    const ws1 = XLSX.utils.aoa_to_sheet(ov);
+    ws1['!cols'] = [{wch:28},{wch:16}];
+    XLSX.utils.book_append_sheet(wb, ws1, 'Übersicht');
+
+    // Sheet 2: Top Produkte
+    const pr = [
+      ['Produkt','Umsatz (€)','Anzahl'],
+      ...topProdukte.map(p=>[p.name, fmtE(p.betrag), p.count]),
+    ];
+    const ws2 = XLSX.utils.aoa_to_sheet(pr);
+    ws2['!cols'] = [{wch:30},{wch:14},{wch:10}];
+    XLSX.utils.book_append_sheet(wb, ws2, 'Produkte');
+
+    // Sheet 3: Bestellungen
+    const br = [
+      ['#','Datum','Name','Notiz','Gesamt (€)','Zahlungsart','Kassierer','Bereich'],
+      ...periodeB.map(b=>[
+        b.nummer||'', fmtD(b.erstellt_am), b.kundenname||'', b.notiz||'',
+        fmtE(b.gesamt), (b.zahlung||[]).map(z=>z.name).join(', '),
+        b.kassiererName||'', b._area||'',
+      ]),
+    ];
+    const ws3 = XLSX.utils.aoa_to_sheet(br);
+    ws3['!cols'] = [{wch:6},{wch:18},{wch:16},{wch:20},{wch:12},{wch:16},{wch:14},{wch:12}];
+    XLSX.utils.book_append_sheet(wb, ws3, 'Bestellungen');
+
+    // Sheet 4: Schichten
+    const sr = [
+      ['Kassierer','Start','Ende','Startgeld (€)','Endgeld (€)','Umsatz (€)','Bestellungen','Bereich'],
+      ...periodeSchichten.map(s=>[
+        s.kassiererName||'', fmtD(s.start), fmtD(s.ende),
+        fmtE(s.kassenstart||0), fmtE(s.kassenende||0),
+        fmtE(s.umsatz||0), s.bestellungen_count||0, s._area||'',
+      ]),
+    ];
+    const ws4 = XLSX.utils.aoa_to_sheet(sr);
+    ws4['!cols'] = [{wch:14},{wch:18},{wch:18},{wch:14},{wch:14},{wch:12},{wch:12},{wch:12}];
+    XLSX.utils.book_append_sheet(wb, ws4, 'Schichten');
+
+    const fname = `k21-cafe-${profile}-${periodLabel.replace(/\s/g,'-')}-${new Date().toISOString().slice(0,10)}.xlsx`;
+    XLSX.writeFile(wb, fname);
+    toast('Excel exportiert ✓');
+  };
+
+  const exportPDF = () => {
+    const fmtD = d => d ? new Date(d).toLocaleString('de-DE') : '';
+    const fmtE = v => v.toFixed(2)+' €';
+    const rows = periodeB.map(b=>`
+      <tr>
+        <td>${b.nummer||''}</td>
+        <td>${fmtD(b.erstellt_am)}</td>
+        <td>${b.kundenname||''}</td>
+        <td>${b.notiz||''}</td>
+        <td style="text-align:right">${fmtE(b.gesamt)}</td>
+        <td>${(b.zahlung||[]).map(z=>z.name).join(', ')}</td>
+        <td>${b.kassiererName||''}</td>
+      </tr>`).join('');
+    const topRows = topProdukte.map(p=>`<tr><td>${p.name}</td><td style="text-align:right">${fmtE(p.betrag)}</td><td style="text-align:right">${p.count}</td></tr>`).join('');
+    const w = window.open('','_blank');
+    w.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8">
+      <title>K21 Café – ${periodLabel}</title>
+      <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;900&display=swap');
+        * { box-sizing:border-box; margin:0; padding:0; }
+        body { font-family:'Inter',sans-serif; color:#000; background:#fff; padding:32px; font-size:12px; }
+        h1 { font-size:22px; font-weight:900; letter-spacing:-0.04em; margin-bottom:4px; }
+        .sub { color:#666; font-size:11px; margin-bottom:28px; }
+        .kpis { display:flex; gap:16px; margin-bottom:28px; flex-wrap:wrap; }
+        .kpi { background:#f4f4f4; border-radius:10px; padding:12px 18px; min-width:120px; }
+        .kpi-val { font-size:20px; font-weight:900; letter-spacing:-0.03em; }
+        .kpi-lbl { font-size:10px; color:#666; margin-top:2px; text-transform:uppercase; letter-spacing:.05em; }
+        h2 { font-size:13px; font-weight:700; margin:24px 0 8px; text-transform:uppercase; letter-spacing:.05em; }
+        table { width:100%; border-collapse:collapse; margin-bottom:24px; }
+        th { background:#000; color:#fff; text-align:left; padding:7px 10px; font-size:10px; text-transform:uppercase; letter-spacing:.05em; }
+        td { padding:6px 10px; border-bottom:1px solid #eee; }
+        tr:last-child td { border-bottom:none; }
+        @media print { button { display:none; } body { padding:20px; } }
+      </style></head><body>
+      <h1>K21 Café</h1>
+      <div class="sub">Finanzen — ${periodLabel} · Exportiert am ${new Date().toLocaleString('de-DE')}</div>
+      <div class="kpis">
+        <div class="kpi"><div class="kpi-val">${fmtE(periodeUmsatz)}</div><div class="kpi-lbl">Umsatz</div></div>
+        <div class="kpi"><div class="kpi-val">${periodeB.length}</div><div class="kpi-lbl">Bestellungen</div></div>
+        <div class="kpi"><div class="kpi-val">${fmtE(avgBasket)}</div><div class="kpi-lbl">Ø Bestellung</div></div>
+        <div class="kpi"><div class="kpi-val">${stornoCount}</div><div class="kpi-lbl">Stornierungen</div></div>
+      </div>
+      <h2>Top Produkte</h2>
+      <table><thead><tr><th>Produkt</th><th>Umsatz</th><th>Stück</th></tr></thead><tbody>${topRows}</tbody></table>
+      <h2>Alle Bestellungen (${periodeB.length})</h2>
+      <table><thead><tr><th>#</th><th>Datum</th><th>Name</th><th>Notiz</th><th>Gesamt</th><th>Zahlung</th><th>Kassierer</th></tr></thead><tbody>${rows}</tbody></table>
+      <button onclick="window.print()" style="padding:10px 24px;background:#000;color:#fff;border:none;border-radius:8px;cursor:pointer;font-weight:700;font-size:13px">Drucken / Als PDF speichern</button>
+    </body></html>`);
+    w.document.close();
+  };
 
   // ── Vergleich helpers ──────────────────────────────────────────────────────
   const getRangeFor = useCallback((p, fromC, toC) => {
@@ -1629,6 +1751,21 @@ const FinanzenView = ({ cafe, toast, profile, profiles, user }) => {
                 {l}
               </button>
             ))}
+          </div>
+        )}
+        {/* Export buttons */}
+        {tab !== 'vergleich' && (
+          <div className="flex gap-1.5">
+            <button onClick={exportExcel}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold transition-all border border-black/10 hover:bg-black hover:text-white hover:border-black"
+              title="Als Excel exportieren">
+              <SI p={IC.download} size={12}/>Excel
+            </button>
+            <button onClick={exportPDF}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold transition-all border border-black/10 hover:bg-black hover:text-white hover:border-black"
+              title="Als PDF exportieren">
+              <SI p={IC.download} size={12}/>PDF
+            </button>
           </div>
         )}
       </div>
@@ -2076,31 +2213,6 @@ const FinanzenView = ({ cafe, toast, profile, profiles, user }) => {
                 </div>
               ))}
             </div>
-          </div>
-        </div>
-      )}
-
-      {/* ── EINSTELLUNGEN ── */}
-      {tab==='einstellungen' && (
-        <div className="flex flex-col gap-4 max-w-md">
-          <div className="glass rounded-2xl p-5 glow">
-            <h3 className="text-sm font-bold text-slate-700 mb-4">Kassen-Einstellungen</h3>
-            <label className="text-xs font-semibold text-slate-600 mb-1 block">Mindestbetrag Kartenzahlung (€)</label>
-            <div className="flex gap-2 mb-2">
-              <input type="number" className={INP} value={minKarte} onChange={e=>setMinKarte(e.target.value)} step="1" min="0"/>
-              <button onClick={saveMinKarte}
-                className="px-4 py-2.5 rounded-xl text-sm font-semibold text-white flex-shrink-0" style={{background:'#000000'}}>
-                Speichern
-              </button>
-            </div>
-            <p className="text-xs text-slate-400">Bestellungen unter diesem Betrag können nicht per Karte bezahlt werden.</p>
-          </div>
-          <div className="glass rounded-2xl p-5 glow">
-            <h3 className="text-sm font-bold text-slate-700 mb-3">Daten-Export</h3>
-            <p className="text-xs text-slate-400 mb-3">Exportiert alle Daten dieses Bereichs als JSON-Datei.</p>
-            <button onClick={exportData} className="w-full py-2.5 rounded-xl text-sm font-semibold flex items-center justify-center gap-2 border border-black/10 hover:bg-black/5 transition-all">
-              <SI p={IC.download} size={14}/>JSON Export — {profile}
-            </button>
           </div>
         </div>
       )}
