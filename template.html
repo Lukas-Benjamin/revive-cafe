@@ -507,13 +507,17 @@ const CheckoutModal = ({ warenkorb, gesamt, cafe, schicht, user, toast, onClose,
     if (!methode?.gutschein) return 0;
     if (methode.gutschein_typ==='betrag') return Math.min(methode.gutschein_wert||0, restBetrag);
     if (methode.gutschein_typ==='produkte') {
-      // sum of cheapest N products in warenkorb
       const n = methode.gutschein_wert||0;
-      const einzeln = warenkorb.flatMap(i=>Array(i.menge).fill(i.preis)).sort((a,b)=>b-a).slice(0,n);
-      return Math.min(einzeln.reduce((s,v)=>s+v,0), restBetrag);
+      // All individual item prices sorted most expensive first
+      const allePreise = warenkorb.flatMap(i=>Array(i.menge).fill(i.preis)).sort((a,b)=>b-a);
+      // Skip products already covered by previous same-type gutschein entries
+      const bereitsAnzahl = zahlungen.filter(z=>z.gutschein && z.art===methode.id).length * n;
+      const naechste = allePreise.slice(bereitsAnzahl, bereitsAnzahl + n);
+      if (naechste.length === 0) return 0;
+      return Math.min(naechste.reduce((s,v)=>s+v,0), restBetrag);
     }
     return 0;
-  }, [methode, restBetrag, warenkorb]);
+  }, [methode, restBetrag, warenkorb, zahlungen]);
 
   const addZahlung = () => {
     if (!methode) return;
@@ -796,6 +800,10 @@ const SchichtView = ({ cafe, user, toast, activeSchicht, setActiveSchicht, profi
   const [kassenstart, setKassenstart] = useState('');
   const [kassenende, setKassenende]   = useState('');
   const [showBericht, setShowBericht] = useState(false);
+  const [showEndeModal, setShowEndeModal] = useState(false);
+  const [endeKassenende, setEndeKassenende] = useState('');
+  const [unterschrift1, setUnterschrift1]   = useState('');
+  const [unterschrift2, setUnterschrift2]   = useState('');
   const ref = () => db.collection(profile||'k21-cafe').doc('data');
   const write = (patch) => ref().set({...DEFAULT_CAFE(),...cafe,...patch}).catch(e=>toast(e.message,'error'));
 
@@ -818,8 +826,17 @@ const SchichtView = ({ cafe, user, toast, activeSchicht, setActiveSchicht, profi
   };
 
   const endeSchicht = () => {
-    const updated = {...activeSchicht, ende:new Date().toISOString(), kassenende:parseFloat(kassenende)||0};
+    if (!unterschrift1.trim()) { toast('Bitte Kassierer-Name eintragen','error'); return; }
+    if (!unterschrift2.trim()) { toast('Bitte zweite Person eintragen','error'); return; }
+    const updated = {
+      ...activeSchicht,
+      ende: new Date().toISOString(),
+      kassenende: parseFloat(endeKassenende)||0,
+      abgenommen_von: unterschrift2.trim(),
+      abgenommen_kassierer: unterschrift1.trim(),
+    };
     setActiveSchicht(null);
+    setShowEndeModal(false);
     setShowBericht(false);
     toast('Schicht beendet ✓');
     ref().set({...DEFAULT_CAFE(),...cafe, schichten:(cafe.schichten||[]).map(s=>s.id===activeSchicht.id?updated:s)}).catch(e=>toast(e.message,'error'));
@@ -833,11 +850,25 @@ const SchichtView = ({ cafe, user, toast, activeSchicht, setActiveSchicht, profi
     const map = {};
     schichtBestellungen.forEach(b=>{
       (b.zahlung||[]).forEach(z=>{
-        map[z.art] = (map[z.art]||0) + z.betrag;
+        const key = z.name||z.art;
+        map[key] = (map[key]||0) + z.betrag;
       });
     });
     return map;
   }, [schichtBestellungen]);
+
+  const topProdukteSchicht = useMemo(() => {
+    const map = {};
+    schichtBestellungen.forEach(b=>(b.artikel||[]).forEach(a=>{
+      if (!map[a.name]) map[a.name]={name:a.name,count:0,betrag:0};
+      map[a.name].count+=a.menge; map[a.name].betrag+=a.preis*a.menge;
+    }));
+    return Object.values(map).sort((a,b)=>b.count-a.count).slice(0,6);
+  }, [schichtBestellungen]);
+
+  const schichtUmsatz = schichtBestellungen.reduce((s,b)=>s+b.gesamt,0);
+  const barEinnahmen  = useMemo(()=>schichtBestellungen.reduce((s,b)=>s+(b.zahlung||[]).filter(z=>z.art==='bar'||(z.name||'').toLowerCase()==='bar'||(z.name||'').toLowerCase()==='bargeld').reduce((a,z)=>a+z.betrag,0),0),[schichtBestellungen]);
+  const kassenDiff    = endeKassenende!=='' ? (parseFloat(endeKassenende)||0)-(activeSchicht?.kassenstart||0)-barEinnahmen : null;
 
   const dauer = useMemo(() => {
     if (!activeSchicht) return '';
@@ -873,6 +904,11 @@ const SchichtView = ({ cafe, user, toast, activeSchicht, setActiveSchicht, profi
                   <div>
                     <div className="text-sm font-semibold text-slate-700">{s.kassiererName}</div>
                     <div className="text-xs text-slate-400">{fmtDateTime(s.start)} – {fmtTime(s.ende)}</div>
+                    {s.abgenommen_von && (
+                      <div className="text-xs text-slate-400 mt-0.5">
+                        Bestätigt: {s.abgenommen_kassierer||s.kassiererName} &amp; {s.abgenommen_von}
+                      </div>
+                    )}
                   </div>
                   <div className="flex items-center gap-3">
                     <div className="text-right">
@@ -928,14 +964,128 @@ const SchichtView = ({ cafe, user, toast, activeSchicht, setActiveSchicht, profi
             ))}
           </div>
         )}
-        <label className="text-xs font-semibold text-slate-600 mb-1 block">Kassenende (Bargeld in Kasse)</label>
-        <input type="number" className={INP + ' mb-3'} placeholder="z.B. 80.00"
-          value={kassenende} onChange={e=>setKassenende(e.target.value)} step="0.01"/>
-        <button onClick={endeSchicht}
+        <button onClick={()=>{ setUnterschrift1(user.name||''); setUnterschrift2(''); setEndeKassenende(''); setShowEndeModal(true); }}
           className="w-full py-3 rounded-xl text-sm font-bold text-red-600 border border-red-200 hover:bg-red-50 transition-all">
           Schicht beenden
         </button>
       </div>
+
+      {/* Vier-Augen-Schichtende-Modal */}
+      {showEndeModal && (
+        <div className="modal-overlay" style={{position:'fixed',inset:0,zIndex:5000,display:'flex',alignItems:'center',justifyContent:'center',padding:'16px',background:'rgba(0,0,0,0.75)'}}
+          onClick={e=>{ if(e.target===e.currentTarget) setShowEndeModal(false); }}>
+          <div className="glass rounded-2xl glow w-full" style={{maxWidth:'560px',maxHeight:'92vh',overflowY:'auto'}}>
+            {/* Header */}
+            <div className="flex items-center justify-between px-5 py-4" style={{borderBottom:'1px solid rgba(0,0,0,0.08)',position:'sticky',top:0,background:'rgba(255,255,255,0.99)',zIndex:10}}>
+              <div>
+                <h3 className="font-semibold text-slate-800 text-sm">Schicht beenden — Vier-Augen-Prinzip</h3>
+                <div className="text-xs text-slate-400 mt-0.5">Zwei Personen müssen die Schicht bestätigen</div>
+              </div>
+              <button onClick={()=>setShowEndeModal(false)} className="text-slate-400 hover:text-slate-700"><SI p={IC.x} size={15}/></button>
+            </div>
+            <div className="p-5 flex flex-col gap-5">
+
+              {/* Schicht-Zusammenfassung */}
+              <div>
+                <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-3">Schicht-Zusammenfassung</h4>
+                <div className="grid gap-3" style={{gridTemplateColumns:'1fr 1fr'}}>
+                  {[
+                    ['Kassierer',    activeSchicht.kassiererName],
+                    ['Gestartet',    fmtDateTime(activeSchicht.start)],
+                    ['Dauer',        dauer],
+                    ['Kassenstart',  fmtEur(activeSchicht.kassenstart||0)],
+                    ['Bestellungen', schichtBestellungen.length],
+                    ['Umsatz',       fmtEur(schichtUmsatz)],
+                  ].map(([l,v])=>(
+                    <div key={l} className="rounded-xl p-3" style={{background:'#f8fafc'}}>
+                      <div className="text-xs text-slate-400">{l}</div>
+                      <div className="text-sm font-bold text-slate-800">{v}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Zahlungsarten */}
+              {Object.entries(zahlungsBreakdown).length > 0 && (
+                <div>
+                  <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">Zahlungsarten</h4>
+                  <div className="rounded-xl p-3 flex flex-col gap-1.5" style={{background:'#f8fafc'}}>
+                    {Object.entries(zahlungsBreakdown).sort((a,b)=>b[1]-a[1]).map(([art,betrag])=>(
+                      <div key={art} className="flex items-center gap-2">
+                        <span className="text-xs text-slate-600 flex-1">{art}</span>
+                        <div className="flex-1 rounded-full overflow-hidden" style={{height:'6px',background:'#e2e8f0'}}>
+                          <div style={{height:'100%',width:`${schichtUmsatz>0?(betrag/schichtUmsatz*100).toFixed(1):0}%`,background:'#6366f1',borderRadius:'9px'}}/>
+                        </div>
+                        <span className="text-xs font-semibold text-slate-700 text-right" style={{width:'60px'}}>{fmtEur(betrag)}</span>
+                        <span className="text-xs text-slate-400" style={{width:'30px',textAlign:'right'}}>{schichtUmsatz>0?(betrag/schichtUmsatz*100).toFixed(0):0}%</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Top Produkte */}
+              {topProdukteSchicht.length > 0 && (
+                <div>
+                  <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">Meistverkaufte Produkte</h4>
+                  <div className="rounded-xl p-3 flex flex-col gap-1.5" style={{background:'#f8fafc'}}>
+                    {topProdukteSchicht.map((p,i)=>(
+                      <div key={p.name} className="flex items-center gap-2">
+                        <span className="text-xs font-bold text-slate-300 w-4 text-right">{i+1}</span>
+                        <span className="text-xs text-slate-600 flex-1 truncate">{p.name}</span>
+                        <span className="text-xs text-slate-400">{p.count}×</span>
+                        <span className="text-xs font-semibold text-slate-700" style={{width:'56px',textAlign:'right'}}>{fmtEur(p.betrag)}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Kassenende + Differenz */}
+              <div>
+                <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">Kassenabschluss</h4>
+                <label className="text-xs font-semibold text-slate-600 mb-1 block">Bargeld gezählt (Kassenende)</label>
+                <input type="number" className={INP+' mb-2'} placeholder="z.B. 80.00"
+                  value={endeKassenende} onChange={e=>setEndeKassenende(e.target.value)} step="0.01"/>
+                {kassenDiff !== null && (
+                  <div className="rounded-xl px-4 py-2.5 flex items-center justify-between" style={{background: kassenDiff<-0.01?'#fef2f2':kassenDiff>0.01?'#f0fdf4':'#f8fafc'}}>
+                    <span className="text-xs font-semibold text-slate-600">Kassendifferenz (Ist − Soll)</span>
+                    <span className="text-sm font-bold" style={{color:kassenDiff<-0.01?'#dc2626':kassenDiff>0.01?'#16a34a':'#475569'}}>
+                      {kassenDiff>=0?'+':''}{fmtEur(kassenDiff)}
+                    </span>
+                  </div>
+                )}
+              </div>
+
+              {/* Vier-Augen-Unterschriften */}
+              <div>
+                <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-3">Bestätigung durch zwei Personen</h4>
+                <div className="grid gap-3" style={{gridTemplateColumns:'1fr 1fr'}}>
+                  <div>
+                    <label className="text-xs font-semibold text-slate-600 mb-1 block">Kassierer</label>
+                    <input className={INP} placeholder="Name Kassierer"
+                      value={unterschrift1} onChange={e=>setUnterschrift1(e.target.value)}/>
+                  </div>
+                  <div>
+                    <label className="text-xs font-semibold text-slate-600 mb-1 block">Zweite Person</label>
+                    <input className={INP} placeholder="Name zweite Person"
+                      value={unterschrift2} onChange={e=>setUnterschrift2(e.target.value)}/>
+                  </div>
+                </div>
+                <div className="text-xs text-slate-400 mt-2">Beide Namen müssen eingetragen sein, um die Schicht zu beenden.</div>
+              </div>
+
+              {/* Bestätigen */}
+              <button onClick={endeSchicht}
+                disabled={!unterschrift1.trim()||!unterschrift2.trim()}
+                className="w-full py-3 rounded-xl text-sm font-bold transition-all"
+                style={{background:unterschrift1.trim()&&unterschrift2.trim()?'#dc2626':'#f1f5f9', color:unterschrift1.trim()&&unterschrift2.trim()?'#fff':'#94a3b8', cursor:unterschrift1.trim()&&unterschrift2.trim()?'pointer':'not-allowed'}}>
+                Schicht verbindlich beenden
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
@@ -2290,6 +2440,7 @@ const FinanzenView = ({ cafe, toast, profile, profiles, user }) => {
                     <div>
                       <h3 className="font-semibold text-slate-800 text-sm">Schicht: {selSchicht.kassiererName}</h3>
                       <div className="text-xs text-slate-400 mt-0.5">{fmtDateTime(selSchicht.start)}{selSchicht.ende?` – ${fmtTime(selSchicht.ende)}`:' (aktiv)'} · {dauer}</div>
+                      {selSchicht.abgenommen_von && <div className="text-xs text-slate-400 mt-0.5">Bestätigt: {selSchicht.abgenommen_kassierer||selSchicht.kassiererName} &amp; {selSchicht.abgenommen_von}</div>}
                     </div>
                     <button onClick={()=>setSelSchicht(null)} className="text-slate-400 hover:text-slate-700 transition-all"><SI p={IC.x} size={15}/></button>
                   </div>
