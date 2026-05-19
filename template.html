@@ -491,23 +491,45 @@ const CheckoutModal = ({ warenkorb, gesamt, cafe, schicht, user, toast, onClose,
   const [zahlungen, setZahlungen] = useState([]);
   const [aktuelleId, setAktuelleId] = useState(methoden[0]?.id||'bar');
   const [betrag, setBetrag] = useState('');
-  const [saving, setSaving] = useState(false);
 
-  const bezahlt   = zahlungen.reduce((s,z)=>s+z.betrag,0);
-  const restBetrag= Math.max(0, gesamt - bezahlt);
-  const minKarte  = (cafe.einstellungen||{}).min_karten_betrag || 10;
-  const methode   = methoden.find(m=>m.id===aktuelleId);
-  const wechsel   = aktuelleId==='bar' && parseFloat(betrag)>restBetrag ? parseFloat(betrag)-restBetrag : 0;
+  const bezahlt    = zahlungen.reduce((s,z)=>s+z.betrag,0);
+  const restBetrag = Math.max(0, gesamt - bezahlt);
+  const methode    = methoden.find(m=>m.id===aktuelleId);
+  const wechsel    = methode?.id==='bar' && parseFloat(betrag)>restBetrag ? parseFloat(betrag)-restBetrag : 0;
+
+  // Gutschein: compute effective Betrag based on type
+  const gutscheinBetrag = useMemo(() => {
+    if (!methode?.gutschein) return 0;
+    if (methode.gutschein_typ==='betrag') return Math.min(methode.gutschein_wert||0, restBetrag);
+    if (methode.gutschein_typ==='produkte') {
+      // sum of cheapest N products in warenkorb
+      const n = methode.gutschein_wert||0;
+      const einzeln = warenkorb.flatMap(i=>Array(i.menge).fill(i.preis)).sort((a,b)=>a-b).slice(0,n);
+      return Math.min(einzeln.reduce((s,v)=>s+v,0), restBetrag);
+    }
+    return 0;
+  }, [methode, restBetrag, warenkorb]);
 
   const addZahlung = () => {
-    if (aktuelleId==='karte') {
-      if (restBetrag < minKarte) { toast(`Mindestbetrag: ${fmtEur(minKarte)}`,'warn'); return; }
-      setZahlungen(p=>[...p,{art:aktuelleId, name:methode?.name||'Karte', betrag:restBetrag}]);
+    if (!methode) return;
+    // Mindestbetrag check
+    if ((methode.mindestbetrag||0) > 0 && restBetrag < methode.mindestbetrag) {
+      toast(`Mindestbetrag für ${methode.name}: ${fmtEur(methode.mindestbetrag)}`,'warn'); return;
+    }
+    if (methode.gutschein) {
+      if (gutscheinBetrag <= 0) { toast('Gutscheinwert deckt nichts ab','warn'); return; }
+      const label = methode.gutschein_typ==='produkte'
+        ? `${methode.name} (${methode.gutschein_wert} Prod.)`
+        : methode.name;
+      setZahlungen(p=>[...p,{art:methode.id, name:label, betrag:gutscheinBetrag, gutschein:true}]);
+      setBetrag('');
     } else {
-      const b = Math.min(parseFloat(betrag)||0, aktuelleId==='bar' ? parseFloat(betrag)||0 : restBetrag);
+      const eingabe = parseFloat(betrag)||0;
+      // Karten-artige Methoden (kein Wechselgeld) — buchen exakt Restbetrag
+      const b = methode.id==='bar' ? eingabe : restBetrag;
       const actual = Math.min(b, restBetrag);
-      if (actual<=0) { toast('Betrag eingeben','error'); return; }
-      setZahlungen(p=>[...p,{art:aktuelleId, name:methode?.name||aktuelleId, betrag:actual}]);
+      if (actual <= 0) { toast('Betrag eingeben','error'); return; }
+      setZahlungen(p=>[...p,{art:methode.id, name:methode.name, betrag:actual}]);
       setBetrag('');
     }
   };
@@ -536,10 +558,11 @@ const CheckoutModal = ({ warenkorb, gesamt, cafe, schicht, user, toast, onClose,
   return (
     <Modal title="Kasse" onClose={onClose} wide>
       <div className="flex flex-col gap-4">
+        {/* Artikel */}
         <div className="rounded-xl p-3" style={{background:'#f8fafc'}}>
           {warenkorb.map(i=>(
             <div key={i.produkt_id} className="flex justify-between text-sm py-0.5">
-              <span className="text-slate-600">{i.emoji} {i.name} x{i.menge}</span>
+              <span className="text-slate-600">{i.name} ×{i.menge}</span>
               <span className="font-semibold">{fmtEur(i.preis*i.menge)}</span>
             </div>
           ))}
@@ -548,65 +571,97 @@ const CheckoutModal = ({ warenkorb, gesamt, cafe, schicht, user, toast, onClose,
           </div>
         </div>
 
+        {/* Bereits bezahlt */}
         {zahlungen.length > 0 && (
-          <div>
-            <p className="text-xs font-semibold text-slate-500 mb-2">Zahlungen</p>
+          <div className="rounded-xl p-3" style={{background:'#f0fdf4',border:'1px solid #bbf7d0'}}>
+            <p className="text-xs font-semibold text-green-700 mb-1.5">Zahlungen</p>
             {zahlungen.map((z,i)=>(
-              <div key={i} className="flex items-center justify-between text-xs py-1">
-                <span className="text-slate-600">{z.name}</span>
+              <div key={i} className="flex items-center justify-between text-xs py-0.5">
+                <span className="text-green-800 flex items-center gap-1">
+                  {z.gutschein && <span className="pill" style={{background:'#ede9fe',color:'#6d28d9',fontSize:'9px'}}>Gutschein</span>}
+                  {z.name}
+                </span>
                 <div className="flex items-center gap-2">
-                  <span className="font-semibold">{fmtEur(z.betrag)}</span>
-                  <button onClick={()=>setZahlungen(p=>p.filter((_,j)=>j!==i))} className="text-slate-300 hover:text-red-400"><SI p={IC.x} size={11}/></button>
+                  <span className="font-bold text-green-700">{fmtEur(z.betrag)}</span>
+                  <button onClick={()=>setZahlungen(p=>p.filter((_,j)=>j!==i))} className="text-green-300 hover:text-red-400"><SI p={IC.x} size={11}/></button>
                 </div>
               </div>
             ))}
           </div>
         )}
 
+        {/* Rest / Bezahlt */}
         <div className="flex justify-between items-center">
           <span className="text-sm font-semibold text-slate-600">Noch offen</span>
-          <span className={`text-lg font-bold ${restBetrag<=0.005?'text-green-600':'text-slate-900'}`}>
+          <span className={`text-xl font-bold ${restBetrag<=0.005?'text-emerald-600':'text-slate-900'}`}>
             {restBetrag<=0.005 ? '✓ Bezahlt' : fmtEur(restBetrag)}
           </span>
         </div>
 
+        {/* Zahlung hinzufügen */}
         {restBetrag > 0.005 && (
-          <div>
-            <p className="text-xs font-semibold text-slate-500 mb-2">Zahlungsart</p>
-            <div className="flex flex-wrap gap-2 mb-3">
-              {methoden.map(m=>(
-                <button key={m.id} onClick={()=>{setAktuelleId(m.id);setBetrag('');}}
-                  className={`pill transition-all ${aktuelleId===m.id?'text-white':'text-slate-600 bg-white border border-black/10'}`}
-                  style={aktuelleId===m.id?{background:'#0f172a'}:{}}>
-                  {m.emoji} {m.name}
-                </button>
-              ))}
+          <div className="flex flex-col gap-3">
+            <p className="text-xs font-semibold text-slate-500">Zahlungsart wählen</p>
+            <div className="flex flex-wrap gap-2">
+              {methoden.map(m=>{
+                const disabled = (m.mindestbetrag||0)>0 && restBetrag<m.mindestbetrag;
+                return (
+                  <button key={m.id} onClick={()=>{setAktuelleId(m.id);setBetrag('');}}
+                    disabled={disabled}
+                    title={disabled?`Mindestbetrag: ${fmtEur(m.mindestbetrag)}`:''}
+                    className={`pill transition-all disabled:opacity-40 ${aktuelleId===m.id?'text-white':'text-slate-600 bg-white border border-black/10'}`}
+                    style={aktuelleId===m.id?{background: m.gutschein?'#6d28d9':'#0f172a'}:{}}>
+                    {m.gutschein ? '🎁 ' : ''}{m.name}
+                    {(m.mindestbetrag||0)>0 && <span className="ml-1 opacity-60">Min. {fmtEur(m.mindestbetrag)}</span>}
+                  </button>
+                );
+              })}
             </div>
 
-            {aktuelleId==='karte' ? (
-              restBetrag < minKarte
-                ? <p className="text-xs text-amber-600">Mindestbetrag: {fmtEur(minKarte)}</p>
-                : <button onClick={addZahlung} className="w-full py-2.5 rounded-xl text-sm font-semibold text-white" style={{background:'#0f172a'}}>
-                    💳 Karte: {fmtEur(restBetrag)}
-                  </button>
-            ) : (
+            {methode?.gutschein ? (
+              // Gutschein: zeige Wert und Einlösen-Button
+              <div className="rounded-xl p-3 flex items-center justify-between" style={{background:'#ede9fe',border:'1px solid #ddd6fe'}}>
+                <div>
+                  <div className="text-xs font-semibold text-purple-700">{methode.name}</div>
+                  <div className="text-xs text-purple-500 mt-0.5">
+                    {methode.gutschein_typ==='produkte'
+                      ? `${methode.gutschein_wert} günstigste Produkt(e) gratis`
+                      : `Wert: ${fmtEur(methode.gutschein_wert||0)}`}
+                    {' → '}<strong>{fmtEur(gutscheinBetrag)}</strong> abzugsfähig
+                  </div>
+                </div>
+                <button onClick={addZahlung}
+                  className="px-4 py-2 rounded-xl text-sm font-semibold text-white flex-shrink-0 ml-3"
+                  style={{background:'#6d28d9'}}>
+                  Einlösen
+                </button>
+              </div>
+            ) : methode?.id==='bar' ? (
+              // Bar: freier Betrag mit Wechselgeld
               <div className="flex flex-col gap-1">
                 <div className="flex gap-2">
                   <input type="number" className={INP} placeholder={`Betrag (${fmtEur(restBetrag)})`}
                     value={betrag} onChange={e=>setBetrag(e.target.value)} step="0.01" min="0"
-                    onKeyDown={e=>e.key==='Enter'&&addZahlung()}/>
+                    onKeyDown={e=>e.key==='Enter'&&addZahlung()} autoFocus/>
                   <button onClick={addZahlung} className="px-4 py-2.5 rounded-xl text-sm font-semibold text-white flex-shrink-0" style={{background:'#0f172a'}}>+</button>
                 </div>
-                {aktuelleId==='bar' && parseFloat(betrag)>restBetrag && (
-                  <p className="text-xs text-green-600 font-semibold">Wechselgeld: {fmtEur(wechsel)}</p>
+                {parseFloat(betrag)>restBetrag && (
+                  <p className="text-xs text-emerald-600 font-semibold">Wechselgeld: {fmtEur(wechsel)}</p>
                 )}
               </div>
+            ) : (
+              // Karte o.ä.: bucht exakt Restbetrag
+              <button onClick={addZahlung}
+                className="w-full py-2.5 rounded-xl text-sm font-semibold text-white"
+                style={{background:'#0f172a'}}>
+                {methode?.name}: {fmtEur(restBetrag)}
+              </button>
             )}
           </div>
         )}
 
         <button onClick={saveOrder} disabled={restBetrag>0.005}
-          className="w-full py-3 rounded-xl text-sm font-bold text-white transition-all disabled:opacity-40 mt-2"
+          className="w-full py-3 rounded-xl text-sm font-bold text-white transition-all disabled:opacity-40"
           style={{background:'#10b981'}}>
           Bestellung abschließen ✓
         </button>
@@ -854,37 +909,31 @@ const SchichtView = ({ cafe, user, toast, activeSchicht, setActiveSchicht, profi
 
 // ─── ProdukteView ─────────────────────────────────────────────────────────────
 const ProdukteView = ({ cafe, toast, profile }) => {
-  const [modal, setModal] = useState(null);
+  const [modal, setModal]       = useState(null);
   const [katModal, setKatModal] = useState(null);
-  const [form, setForm] = useState({name:'',preis:'',kategorie_id:'',emoji:'',beschreibung:'',aktiv:true});
-  const [katForm, setKatForm] = useState({name:'',farbe:'#6366f1'});
+  const [form, setForm]         = useState({name:'',preis:'',kategorie_id:'',beschreibung:'',aktiv:true});
+  const [katForm, setKatForm]   = useState({name:'',farbe:'#6366f1'});
   const set = (k,v) => setForm(p=>({...p,[k]:v}));
 
   const COLORS = ['#6366f1','#8b5cf6','#ec4899','#ef4444','#f97316','#f59e0b','#10b981','#06b6d4','#3b82f6'];
-  const ref = () => db.collection(profile||'k21-cafe').doc('data');
+  const ref   = () => db.collection(profile||'k21-cafe').doc('data');
   const write = (patch) => ref().set({...DEFAULT_CAFE(),...cafe,...patch}).catch(e=>toast(e.message,'error'));
 
   const saveProdukt = () => {
     if (!form.name.trim()||!form.preis) { toast('Name und Preis erforderlich','error'); return; }
     let produkte = [...(cafe.produkte||[])];
     if (modal==='add') {
-      produkte = [...produkte, {id:genId(),name:form.name.trim(),preis:parseFloat(form.preis),kategorie_id:form.kategorie_id,emoji:form.emoji,beschreibung:form.beschreibung,aktiv:true}];
+      produkte = [...produkte, {id:genId(),name:form.name.trim(),preis:parseFloat(form.preis),kategorie_id:form.kategorie_id,beschreibung:form.beschreibung,aktiv:true}];
     } else {
-      produkte = produkte.map(p=>p.id===modal?{...p,name:form.name.trim(),preis:parseFloat(form.preis),kategorie_id:form.kategorie_id,emoji:form.emoji,beschreibung:form.beschreibung}:p);
+      produkte = produkte.map(p=>p.id===modal?{...p,name:form.name.trim(),preis:parseFloat(form.preis),kategorie_id:form.kategorie_id,beschreibung:form.beschreibung}:p);
     }
     setModal(null);
     toast(modal==='add'?'Produkt hinzugefügt ✓':'Produkt aktualisiert ✓');
     write({produkte});
   };
 
-  const toggleAktiv = (p) => {
-    write({produkte:(cafe.produkte||[]).map(x=>x.id===p.id?{...x,aktiv:!x.aktiv}:x)});
-  };
-
-  const deleteProdukt = (id) => {
-    write({produkte:(cafe.produkte||[]).filter(p=>p.id!==id)});
-    toast('Produkt gelöscht','warn');
-  };
+  const toggleAktiv   = (p) => write({produkte:(cafe.produkte||[]).map(x=>x.id===p.id?{...x,aktiv:!x.aktiv}:x)});
+  const deleteProdukt = (id) => { write({produkte:(cafe.produkte||[]).filter(p=>p.id!==id)}); toast('Produkt gelöscht','warn'); };
 
   const saveKat = () => {
     if (!katForm.name.trim()) return;
@@ -899,13 +948,10 @@ const ProdukteView = ({ cafe, toast, profile }) => {
     write({kategorien});
   };
 
-  const deleteKat = (id) => {
-    write({kategorien:(cafe.kategorien||[]).filter(k=>k.id!==id)});
-    toast('Kategorie gelöscht','warn');
-  };
+  const deleteKat = (id) => { write({kategorien:(cafe.kategorien||[]).filter(k=>k.id!==id)}); toast('Kategorie gelöscht','warn'); };
 
-  const openAdd = () => { setForm({name:'',preis:'',kategorie_id:cafe.kategorien[0]?.id||'',emoji:'☕',beschreibung:'',aktiv:true}); setModal('add'); };
-  const openEdit = (p) => { setForm({name:p.name,preis:p.preis,kategorie_id:p.kategorie_id,emoji:p.emoji||'',beschreibung:p.beschreibung||'',aktiv:p.aktiv!==false}); setModal(p.id); };
+  const openAdd  = () => { setForm({name:'',preis:'',kategorie_id:cafe.kategorien?.[0]?.id||'',beschreibung:'',aktiv:true}); setModal('add'); };
+  const openEdit = (p) => { setForm({name:p.name,preis:p.preis,kategorie_id:p.kategorie_id||'',beschreibung:p.beschreibung||'',aktiv:p.aktiv!==false}); setModal(p.id); };
 
   const groupedByKat = useMemo(() => {
     const map = {};
@@ -915,79 +961,114 @@ const ProdukteView = ({ cafe, toast, profile }) => {
       if (map[p.kategorie_id]) map[p.kategorie_id].produkte.push(p);
       else map['_none'].produkte.push(p);
     });
-    return Object.values(map).filter(g=>g.produkte.length>0||g.kat.id!=='_none');
+    return Object.values(map).filter(g=>g.produkte.length>0);
   }, [cafe.produkte, cafe.kategorien]);
+
+  const totalProdukte = (cafe.produkte||[]).length;
+  const aktivCount    = (cafe.produkte||[]).filter(p=>p.aktiv!==false).length;
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-4">
+      {/* Toolbar */}
+      <div className="flex items-center justify-between mb-6">
+        <div>
+          <h2 className="text-sm font-bold text-slate-800">Produkte</h2>
+          <p className="text-xs text-slate-400 mt-0.5">{aktivCount} aktiv · {totalProdukte} gesamt</p>
+        </div>
         <div className="flex gap-2">
-          <button onClick={openAdd} className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-semibold text-white"
+          <button onClick={()=>{setKatForm({name:'',farbe:'#6366f1'});setKatModal('add');}}
+            className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold border border-black/10 text-slate-600 hover:bg-black/5 transition-all">
+            <SI p={IC.tag} size={13}/>Kategorie
+          </button>
+          <button onClick={openAdd}
+            className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-semibold text-white"
             style={{background:'#0f172a'}}>
             <SI p={IC.plus} size={14}/>Produkt
           </button>
-          <button onClick={()=>{setKatForm({name:'',farbe:'#6366f1'});setKatModal('add');}}
-            className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-semibold border border-black/10 text-slate-700 hover:bg-black/5 transition-all">
-            <SI p={IC.tag} size={14}/>Kategorie
-          </button>
         </div>
       </div>
 
-      {/* Categories */}
-      {(cafe.kategorien||[]).length > 0 && (
-        <div className="flex flex-wrap gap-2 mb-4">
-          {(cafe.kategorien||[]).map(k=>(
-            <div key={k.id} className="flex items-center gap-2 pill" style={{background:k.farbe+'22',color:k.farbe}}>
-              <span>{k.name}</span>
-              <button onClick={()=>{setKatForm({name:k.name,farbe:k.farbe});setKatModal(k.id);}} className="hover:opacity-70"><SI p={IC.edit} size={10}/></button>
-              <button onClick={()=>deleteKat(k.id)} className="hover:opacity-70"><SI p={IC.x} size={10}/></button>
-            </div>
-          ))}
+      {totalProdukte===0 && (
+        <div className="text-center py-20 text-slate-400 text-sm">
+          <div className="text-3xl mb-3">🗂</div>
+          Noch keine Produkte. Erstelle zuerst eine Kategorie, dann füge Produkte hinzu.
         </div>
       )}
 
-      {/* Product grid */}
-      <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(200px,1fr))',gap:'10px'}}>
-        {(cafe.produkte||[]).map(p=>{
-          const kat = (cafe.kategorien||[]).find(k=>k.id===p.kategorie_id);
-          return (
-            <div key={p.id} className={`glass rounded-2xl p-4 ${p.aktiv===false?'opacity-50':''}`}>
-              <div className="flex items-start justify-between mb-2">
-                <span className="text-2xl">{p.emoji||'🍵'}</span>
+      {/* Grouped sections */}
+      <div className="flex flex-col gap-6">
+        {groupedByKat.map(({kat,produkte}) => (
+          <div key={kat.id}>
+            {/* Category header */}
+            <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center gap-2">
+                <div style={{width:4,height:20,borderRadius:2,background:kat.farbe,flexShrink:0}}/>
+                <span className="text-sm font-bold text-slate-800">{kat.name}</span>
+                <span className="pill text-xs" style={{background:kat.farbe+'18',color:kat.farbe}}>
+                  {produkte.length} {produkte.length===1?'Produkt':'Produkte'}
+                </span>
+              </div>
+              {kat.id !== '_none' && (
                 <div className="flex items-center gap-1">
-                  <button onClick={()=>toggleAktiv(p)}
-                    className={`toggle ${p.aktiv!==false?'on':''}`}
-                    style={{background:p.aktiv!==false?'#10b981':'#cbd5e1'}}/>
+                  <button onClick={()=>{setKatForm({name:kat.name,farbe:kat.farbe});setKatModal(kat.id);}}
+                    className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-black/5 transition-all">
+                    <SI p={IC.edit} size={13}/>
+                  </button>
+                  <button onClick={()=>deleteKat(kat.id)}
+                    className="p-1.5 rounded-lg text-slate-400 hover:text-red-500 hover:bg-red-50 transition-all">
+                    <SI p={IC.trash} size={13}/>
+                  </button>
                 </div>
-              </div>
-              <div className="text-sm font-bold text-slate-800 mb-0.5">{p.name}</div>
-              {kat && <span className="pill text-xs mb-2" style={{background:kat.farbe+'22',color:kat.farbe}}>{kat.name}</span>}
-              <div className="text-base font-bold mt-1" style={{color:kat?.farbe||'#6366f1'}}>{fmtEur(p.preis)}</div>
-              <div className="flex gap-2 mt-3">
-                <button onClick={()=>openEdit(p)} className="flex-1 py-1.5 rounded-lg text-xs font-semibold border border-black/10 hover:bg-black/5 transition-all">
-                  <SI p={IC.edit} size={12}/>
-                </button>
-                <button onClick={()=>deleteProdukt(p.id)} className="flex-1 py-1.5 rounded-lg text-xs font-semibold border border-red-200 text-red-500 hover:bg-red-50 transition-all">
-                  <SI p={IC.trash} size={12}/>
-                </button>
-              </div>
+              )}
             </div>
-          );
-        })}
+
+            {/* Product table */}
+            <div className="glass rounded-2xl glow overflow-hidden">
+              {produkte.map((p,i) => (
+                <div key={p.id}
+                  className={`flex items-center gap-4 px-4 py-3 transition-all ${p.aktiv===false?'opacity-40 bg-slate-50':''}`}
+                  style={{borderBottom: i<produkte.length-1 ? '1px solid rgba(0,0,0,0.05)' : 'none'}}>
+
+                  {/* Color dot */}
+                  <div style={{width:8,height:8,borderRadius:'50%',background:p.aktiv!==false?kat.farbe:'#cbd5e1',flexShrink:0}}/>
+
+                  {/* Name + description */}
+                  <div style={{flex:1,minWidth:0}}>
+                    <div className="text-sm font-semibold text-slate-800 truncate">{p.name}</div>
+                    {p.beschreibung && <div className="text-xs text-slate-400 truncate">{p.beschreibung}</div>}
+                  </div>
+
+                  {/* Price */}
+                  <span className="text-sm font-bold text-slate-900 flex-shrink-0">{fmtEur(p.preis)}</span>
+
+                  {/* Active toggle */}
+                  <button onClick={()=>toggleAktiv(p)}
+                    className={`toggle flex-shrink-0 ${p.aktiv!==false?'on':''}`}
+                    style={{background:p.aktiv!==false?kat.farbe:'#cbd5e1'}}/>
+
+                  {/* Edit / Delete */}
+                  <button onClick={()=>openEdit(p)}
+                    className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-black/5 transition-all flex-shrink-0">
+                    <SI p={IC.edit} size={14}/>
+                  </button>
+                  <button onClick={()=>deleteProdukt(p.id)}
+                    className="p-1.5 rounded-lg text-slate-400 hover:text-red-500 hover:bg-red-50 transition-all flex-shrink-0">
+                    <SI p={IC.trash} size={14}/>
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+        ))}
       </div>
 
+      {/* Produkt Modal */}
       {modal && (
         <Modal title={modal==='add'?'Produkt hinzufügen':'Produkt bearbeiten'} onClose={()=>setModal(null)}>
           <div className="flex flex-col gap-3">
-            <div className="flex gap-2">
-              <div style={{flex:'0 0 72px'}}>
-                <label className="text-xs font-semibold text-slate-600 mb-1 block">Emoji</label>
-                <input className={INP} value={form.emoji} onChange={e=>set('emoji',e.target.value)} placeholder="☕" maxLength={4}/>
-              </div>
-              <div style={{flex:1}}>
-                <label className="text-xs font-semibold text-slate-600 mb-1 block">Name</label>
-                <input className={INP} value={form.name} onChange={e=>set('name',e.target.value)} placeholder="Cappuccino"/>
-              </div>
+            <div>
+              <label className="text-xs font-semibold text-slate-600 mb-1 block">Name</label>
+              <input className={INP} value={form.name} onChange={e=>set('name',e.target.value)} placeholder="z.B. Cappuccino" autoFocus/>
             </div>
             <div>
               <label className="text-xs font-semibold text-slate-600 mb-1 block">Preis (€)</label>
@@ -1012,20 +1093,23 @@ const ProdukteView = ({ cafe, toast, profile }) => {
         </Modal>
       )}
 
+      {/* Kategorie Modal */}
       {katModal && (
         <Modal title={katModal==='add'?'Kategorie hinzufügen':'Kategorie bearbeiten'} onClose={()=>setKatModal(null)}>
           <div className="flex flex-col gap-3">
             <div>
               <label className="text-xs font-semibold text-slate-600 mb-1 block">Name</label>
-              <input className={INP} value={katForm.name} onChange={e=>setKatForm(p=>({...p,name:e.target.value}))} placeholder="Heißgetränke"/>
+              <input className={INP} value={katForm.name} onChange={e=>setKatForm(p=>({...p,name:e.target.value}))} placeholder="z.B. Heißgetränke" autoFocus/>
             </div>
             <div>
               <label className="text-xs font-semibold text-slate-600 mb-2 block">Farbe</label>
               <div className="flex flex-wrap gap-2">
                 {COLORS.map(c=>(
                   <button key={c} onClick={()=>setKatForm(p=>({...p,farbe:c}))}
-                    className="w-7 h-7 rounded-full transition-all hover:scale-110"
-                    style={{background:c,outline:katForm.farbe===c?`2px solid ${c}`:'2px solid transparent',outlineOffset:'2px'}}/>
+                    className="w-8 h-8 rounded-full transition-all hover:scale-110 flex items-center justify-center"
+                    style={{background:c,outline:katForm.farbe===c?`3px solid ${c}`:'3px solid transparent',outlineOffset:'2px'}}>
+                    {katForm.farbe===c && <SI p={IC.check} size={12} stroke={3}/>}
+                  </button>
                 ))}
               </div>
             </div>
@@ -1041,22 +1125,31 @@ const ProdukteView = ({ cafe, toast, profile }) => {
 };
 
 // ─── ZahlungsMethodenView ─────────────────────────────────────────────────────
+const EMPTY_ZM = () => ({name:'', mindestbetrag:'', gutschein:false, gutschein_typ:'betrag', gutschein_wert:''});
+
 const ZahlungsMethodenView = ({ cafe, toast, profile }) => {
   const [modal, setModal] = useState(null);
-  const [form, setForm] = useState({name:'',emoji:'💰'});
-  const EMOJIS = ['💵','💳','📱','🎁','🏷','💰','🔄','📋','🧾','🪙'];
+  const [form, setForm]   = useState(EMPTY_ZM());
+  const sf = (k,v) => setForm(p=>({...p,[k]:v}));
   const methoden = cafe.zahlungsmethoden || [];
 
-  const ref = () => db.collection(profile||'k21-cafe').doc('data');
+  const ref   = () => db.collection(profile||'k21-cafe').doc('data');
   const write = (zm) => ref().set({...DEFAULT_CAFE(),...cafe,zahlungsmethoden:zm}).catch(e=>toast(e.message,'error'));
 
   const save = () => {
     if (!form.name.trim()) { toast('Name erforderlich','error'); return; }
+    const entry = {
+      name: form.name.trim(),
+      mindestbetrag: parseFloat(form.mindestbetrag)||0,
+      gutschein: !!form.gutschein,
+      gutschein_typ: form.gutschein ? form.gutschein_typ : null,
+      gutschein_wert: form.gutschein ? (parseFloat(form.gutschein_wert)||0) : null,
+    };
     let zm = [...methoden];
     if (modal==='add') {
-      zm = [...zm, {id:genId(), name:form.name.trim(), emoji:form.emoji, aktiv:true}];
+      zm = [...zm, {id:genId(), ...entry, aktiv:true}];
     } else {
-      zm = zm.map(m=>m.id===modal ? {...m, name:form.name.trim(), emoji:form.emoji} : m);
+      zm = zm.map(m=>m.id===modal ? {...m, ...entry} : m);
     }
     setModal(null);
     toast(modal==='add'?'Hinzugefügt ✓':'Aktualisiert ✓');
@@ -1066,39 +1159,81 @@ const ZahlungsMethodenView = ({ cafe, toast, profile }) => {
   const toggleAktiv = (m) => write(methoden.map(x=>x.id===m.id?{...x,aktiv:!x.aktiv}:x));
   const del = (id) => { write(methoden.filter(x=>x.id!==id)); toast('Gelöscht','warn'); };
 
+  const openAdd  = () => { setForm(EMPTY_ZM()); setModal('add'); };
+  const openEdit = (m) => {
+    setForm({
+      name: m.name,
+      mindestbetrag: m.mindestbetrag||'',
+      gutschein: !!m.gutschein,
+      gutschein_typ: m.gutschein_typ||'betrag',
+      gutschein_wert: m.gutschein_wert||'',
+    });
+    setModal(m.id);
+  };
+
+  // Badge helper
+  const badges = (m) => {
+    const out = [];
+    if (m.aktiv) out.push({label:'Aktiv', bg:'#d1fae5', col:'#065f46'});
+    else         out.push({label:'Inaktiv', bg:'#f1f5f9', col:'#64748b'});
+    if (m.mindestbetrag>0) out.push({label:`Min. ${fmtEur(m.mindestbetrag)}`, bg:'#fef3c7', col:'#92400e'});
+    if (m.gutschein) {
+      const v = m.gutschein_typ==='produkte'
+        ? `${m.gutschein_wert} Produkt${m.gutschein_wert===1?'':'e'}`
+        : fmtEur(m.gutschein_wert||0);
+      out.push({label:`Gutschein · ${v}`, bg:'#ede9fe', col:'#6d28d9'});
+    }
+    return out;
+  };
+
   return (
     <div>
-      <div className="flex items-center justify-between mb-5">
+      <div className="flex items-center justify-between mb-6">
         <div>
           <h2 className="text-sm font-bold text-slate-800">Zahlungsmethoden</h2>
           <p className="text-xs text-slate-400 mt-0.5">{methoden.filter(m=>m.aktiv).length} von {methoden.length} aktiv</p>
         </div>
-        <button onClick={()=>{setForm({name:'',emoji:'💰'});setModal('add');}}
+        <button onClick={openAdd}
           className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-semibold text-white" style={{background:'#0f172a'}}>
           <SI p={IC.plus} size={14}/>Methode
         </button>
       </div>
-      <div className="flex flex-col gap-2">
-        {methoden.length===0 && <div className="text-center py-12 text-slate-400 text-sm">Noch keine Zahlungsmethoden</div>}
-        {methoden.map(m=>(
-          <div key={m.id} className={`glass rounded-2xl px-4 py-3 flex items-center justify-between transition-all ${!m.aktiv?'opacity-50':''}`}>
-            <div className="flex items-center gap-3">
-              <span className="text-xl">{m.emoji}</span>
-              <div>
-                <div className="text-sm font-bold text-slate-800">{m.name}</div>
-                <span className="pill text-xs" style={{background:m.aktiv?'#d1fae5':'#f1f5f9',color:m.aktiv?'#065f46':'#64748b'}}>
-                  {m.aktiv?'Aktiv':'Inaktiv'}
-                </span>
+
+      {methoden.length===0 && (
+        <div className="text-center py-16 text-slate-400 text-sm">
+          <div className="text-3xl mb-3">💳</div>Noch keine Zahlungsmethoden
+        </div>
+      )}
+
+      <div className="glass rounded-2xl glow overflow-hidden">
+        {methoden.map((m,i)=>(
+          <div key={m.id}
+            className={`flex items-center gap-4 px-4 py-4 transition-all ${!m.aktiv?'opacity-50 bg-slate-50':''}`}
+            style={{borderBottom:i<methoden.length-1?'1px solid rgba(0,0,0,0.05)':'none'}}>
+
+            {/* Left: name + badges */}
+            <div style={{flex:1,minWidth:0}}>
+              <div className="text-sm font-bold text-slate-800 mb-1.5">{m.name}</div>
+              <div className="flex flex-wrap gap-1">
+                {badges(m).map(b=>(
+                  <span key={b.label} className="pill text-xs" style={{background:b.bg,color:b.col}}>{b.label}</span>
+                ))}
               </div>
             </div>
-            <div className="flex items-center gap-2">
+
+            {/* Controls */}
+            <div className="flex items-center gap-2 flex-shrink-0">
               <button onClick={()=>toggleAktiv(m)}
                 className={`toggle ${m.aktiv?'on':''}`}
                 style={{background:m.aktiv?'#10b981':'#cbd5e1'}}/>
-              <button onClick={()=>{setForm({name:m.name,emoji:m.emoji});setModal(m.id);}}
-                className="text-slate-400 hover:text-slate-700 transition-all"><SI p={IC.edit} size={15}/></button>
+              <button onClick={()=>openEdit(m)}
+                className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-black/5 transition-all">
+                <SI p={IC.edit} size={14}/>
+              </button>
               <button onClick={()=>del(m.id)}
-                className="text-slate-400 hover:text-red-500 transition-all"><SI p={IC.trash} size={15}/></button>
+                className="p-1.5 rounded-lg text-slate-400 hover:text-red-500 hover:bg-red-50 transition-all">
+                <SI p={IC.trash} size={14}/>
+              </button>
             </div>
           </div>
         ))}
@@ -1106,23 +1241,69 @@ const ZahlungsMethodenView = ({ cafe, toast, profile }) => {
 
       {modal && (
         <Modal title={modal==='add'?'Zahlungsmethode hinzufügen':'Methode bearbeiten'} onClose={()=>setModal(null)}>
-          <div className="flex flex-col gap-3">
-            <div>
-              <label className="text-xs font-semibold text-slate-600 mb-2 block">Emoji</label>
-              <div className="flex gap-2 flex-wrap">
-                {EMOJIS.map(e=>(
-                  <button key={e} onClick={()=>setForm(p=>({...p,emoji:e}))}
-                    className={`text-xl w-10 h-10 rounded-xl flex items-center justify-center transition-all ${form.emoji===e?'bg-slate-200':'hover:bg-slate-100'}`}>
-                    {e}
-                  </button>
-                ))}
-              </div>
-            </div>
+          <div className="flex flex-col gap-4">
+
+            {/* Name */}
             <div>
               <label className="text-xs font-semibold text-slate-600 mb-1 block">Name</label>
-              <input className={INP} value={form.name} onChange={e=>setForm(p=>({...p,name:e.target.value}))} placeholder="z.B. PayPal" autoFocus/>
+              <input className={INP} value={form.name} onChange={e=>sf('name',e.target.value)}
+                placeholder="z.B. Bar, Karte, PayPal" autoFocus/>
             </div>
-            <div className="flex gap-2 mt-2">
+
+            {/* Mindestbetrag */}
+            <div>
+              <label className="text-xs font-semibold text-slate-600 mb-1 block">Mindestbetrag (€)</label>
+              <input type="number" className={INP} value={form.mindestbetrag}
+                onChange={e=>sf('mindestbetrag',e.target.value)} step="0.50" min="0"
+                placeholder="0 = kein Minimum"/>
+              <p className="text-xs text-slate-400 mt-1">Mindestbetrag damit diese Zahlart gewählt werden kann.</p>
+            </div>
+
+            {/* Gutschein */}
+            <div className="rounded-xl p-4" style={{background:'#f8fafc',border:'1px solid rgba(0,0,0,0.06)'}}>
+              <label className="flex items-center gap-3 cursor-pointer mb-3">
+                <button onClick={()=>sf('gutschein',!form.gutschein)}
+                  className={`toggle ${form.gutschein?'on':''}`}
+                  style={{background:form.gutschein?'#6d28d9':'#cbd5e1'}}/>
+                <div>
+                  <span className="text-sm font-semibold text-slate-700">Gutschein</span>
+                  <p className="text-xs text-slate-400">Diese Methode ist ein Gutschein mit festem Wert</p>
+                </div>
+              </label>
+
+              {form.gutschein && (
+                <div className="flex flex-col gap-3 pt-3" style={{borderTop:'1px solid rgba(0,0,0,0.06)'}}>
+                  <div>
+                    <label className="text-xs font-semibold text-slate-600 mb-2 block">Gutschein-Typ</label>
+                    <div className="flex gap-2">
+                      {[['betrag','Fixer Betrag (€)'],['produkte','Anzahl Produkte']].map(([v,l])=>(
+                        <button key={v} onClick={()=>sf('gutschein_typ',v)}
+                          className={`flex-1 py-2.5 rounded-xl text-xs font-semibold border transition-all ${form.gutschein_typ===v?'text-white border-transparent':'text-slate-600 border-black/10 hover:bg-black/5'}`}
+                          style={form.gutschein_typ===v?{background:'#6d28d9'}:{}}>
+                          {l}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <div>
+                    <label className="text-xs font-semibold text-slate-600 mb-1 block">
+                      {form.gutschein_typ==='produkte' ? 'Anzahl Produkte' : 'Betrag (€)'}
+                    </label>
+                    <input type="number" className={INP} value={form.gutschein_wert}
+                      onChange={e=>sf('gutschein_wert',e.target.value)} min="0"
+                      step={form.gutschein_typ==='produkte'?'1':'0.50'}
+                      placeholder={form.gutschein_typ==='produkte'?'z.B. 2':'z.B. 5.00'}/>
+                    <p className="text-xs text-slate-400 mt-1">
+                      {form.gutschein_typ==='produkte'
+                        ? 'Anzahl der Produkte die mit diesem Gutschein gratis sind (günstigste werden abgezogen).'
+                        : 'Fixer Betrag den dieser Gutschein abdeckt.'}
+                    </p>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className="flex gap-2 mt-1">
               <button onClick={()=>setModal(null)} className="flex-1 py-2.5 rounded-xl text-sm font-semibold border border-black/10 text-slate-700">Abbrechen</button>
               <button onClick={save} className="flex-1 py-2.5 rounded-xl text-sm font-semibold text-white" style={{background:'#0f172a'}}>Speichern</button>
             </div>
