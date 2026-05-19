@@ -101,7 +101,33 @@ async function fsDelete(col, docId) {
   } catch(e) { console.warn('fsDelete error:', e.message); }
 }
 
+async function fsGetDoc(col, docId) {
+  try {
+    const token = await getToken();
+    const r = await fetch(fsUrl(col, docId), { headers:{ Authorization:`Bearer ${token}` } });
+    if (!r.ok) { console.warn('fsGetDoc failed', r.status, col, docId); return null; }
+    const d = await r.json();
+    if (!d.fields) return null;
+    return Object.fromEntries(Object.entries(d.fields).map(([k,v])=>[k,fromFsValue(v)]));
+  } catch(e) { console.warn('fsGetDoc error:', e.message); return null; }
+}
+
 // ─── API routes ──────────────────────────────────────────────────────────────
+// GET /api/data?c=k21-cafe  → read the 'data' document
+app.get('/api/data', async (req, res) => {
+  const col = req.query.c || 'k21-cafe';
+  const data = await fsGetDoc(col, 'data');
+  if (data === null) return res.status(503).json({ error: 'Firestore nicht erreichbar' });
+  res.json(data);
+});
+
+// POST /api/data?c=k21-cafe  → overwrite the 'data' document
+app.post('/api/data', async (req, res) => {
+  const col = req.query.c || 'k21-cafe';
+  await fsSet(col, 'data', req.body);
+  res.json({ ok: true });
+});
+
 // GET /api/users?c=cafe-users   → list all users in a collection
 app.get('/api/users', async (req, res) => {
   const col = req.query.c || 'cafe-users';

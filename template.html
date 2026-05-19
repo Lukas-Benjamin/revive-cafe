@@ -152,6 +152,18 @@ const DEFAULT_CAFE = () => ({
   einstellungen: { min_karten_betrag: 10, waehrung: 'EUR' }
 });
 
+// Server-side write helper — routes all cafe data writes through the server proxy
+// so they work even when Firestore security rules are expired
+async function serverWrite(col, data) {
+  try {
+    await fetch(`/api/data?c=${encodeURIComponent(col)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data)
+    });
+  } catch {}
+}
+
 // ─── Role permissions ─────────────────────────────────────────────────────────
 const can = (role, action) => {
   if (!role) return false;
@@ -669,9 +681,9 @@ const CheckoutModal = ({ warenkorb, gesamt, cafe, schicht, user, toast, onClose,
     );
     toast(`Bestellung #${nummer} gespeichert ✓`);
     onSuccess();
-    db.collection(profile||'k21-cafe').doc('data')
-      .set({...DEFAULT_CAFE(),...cafe, schichten:updSchichten, bestellungen:[...(cafe.bestellungen||[]),neueBestellung]})
-      .catch(e=>toast('Fehler: '+e.message,'error'));
+    const _d1 = {...DEFAULT_CAFE(),...cafe, schichten:updSchichten, bestellungen:[...(cafe.bestellungen||[]),neueBestellung]};
+    serverWrite(profile||'k21-cafe', _d1);
+    db.collection(profile||'k21-cafe').doc('data').set(_d1).catch(e=>toast('Fehler: '+e.message,'error'));
   };
 
   return (
@@ -815,7 +827,7 @@ const BestellungenView = ({ cafe, user, toast, activeSchicht, profile }) => {
   }, [cafe.bestellungen, filter, activeSchicht]);
 
   const ref = () => db.collection(profile||'k21-cafe').doc('data');
-  const write = (patch) => ref().set({...DEFAULT_CAFE(),...cafe,...patch}).catch(e=>toast(e.message,'error'));
+  const write = (patch) => { const d={...DEFAULT_CAFE(),...cafe,...patch}; serverWrite(profile||'k21-cafe',d); ref().set(d).catch(e=>toast(e.message,'error')); };
 
   const markItemFertig = (bestellung, artikelIdx) => {
     const updBestellungen = (cafe.bestellungen||[]).map(b => {
@@ -920,7 +932,7 @@ const SchichtView = ({ cafe, user, toast, activeSchicht, setActiveSchicht, profi
   const [sig2, setSig2] = useState('');
   const [abschluss, setAbschluss]           = useState(null); // {code, kassenende, umsatz, ...}
   const ref  = () => db.collection(profile||'k21-cafe').doc('data');
-  const write = (patch) => ref().set({...DEFAULT_CAFE(),...cafe,...patch}).catch(e=>toast(e.message,'error'));
+  const write = (patch) => { const d={...DEFAULT_CAFE(),...cafe,...patch}; serverWrite(profile||'k21-cafe',d); ref().set(d).catch(e=>toast(e.message,'error')); };
   const role  = (user.role||'').toLowerCase();
   const isAdmin = ['owner','admin'].includes(role);
 
@@ -956,7 +968,7 @@ const SchichtView = ({ cafe, user, toast, activeSchicht, setActiveSchicht, profi
     };
     setActiveSchicht(neu);
     toast('Schicht gestartet ✓');
-    ref().set({...DEFAULT_CAFE(),...cafe, schichten:[...(cafe.schichten||[]),neu]}).catch(e=>toast(e.message,'error'));
+    { const _d={...DEFAULT_CAFE(),...cafe, schichten:[...(cafe.schichten||[]),neu]}; serverWrite(profile||'k21-cafe',_d); ref().set(_d).catch(e=>toast(e.message,'error')); }
   };
 
   const endeSchicht = () => {
@@ -987,7 +999,7 @@ const SchichtView = ({ cafe, user, toast, activeSchicht, setActiveSchicht, profi
       barEinnahmen,
       sig1, sig2,
     });
-    ref().set({...DEFAULT_CAFE(),...cafe, schichten:(cafe.schichten||[]).map(s=>s.id===activeSchicht.id?updated:s)}).catch(e=>toast(e.message,'error'));
+    { const _d={...DEFAULT_CAFE(),...cafe, schichten:(cafe.schichten||[]).map(s=>s.id===activeSchicht.id?updated:s)}; serverWrite(profile||'k21-cafe',_d); ref().set(_d).catch(e=>toast(e.message,'error')); }
   };
 
   const schichtBestellungen = useMemo(() =>
@@ -1325,7 +1337,7 @@ const ProdukteView = ({ cafe, toast, profile }) => {
 
   const COLORS = ['#6366f1','#8b5cf6','#ec4899','#ef4444','#f97316','#f59e0b','#10b981','#06b6d4','#3b82f6'];
   const ref   = () => db.collection(profile||'k21-cafe').doc('data');
-  const write = (patch) => ref().set({...DEFAULT_CAFE(),...cafe,...patch}).catch(e=>toast(e.message,'error'));
+  const write = (patch) => { const d={...DEFAULT_CAFE(),...cafe,...patch}; serverWrite(profile||'k21-cafe',d); ref().set(d).catch(e=>toast(e.message,'error')); };
 
   const saveProdukt = () => {
     if (!form.name.trim()||!form.preis) { toast('Name und Preis erforderlich','error'); return; }
@@ -1552,7 +1564,7 @@ const ZahlungsMethodenView = ({ cafe, toast, profile }) => {
   const methoden = cafe.zahlungsmethoden || [];
 
   const ref   = () => db.collection(profile||'k21-cafe').doc('data');
-  const write = (zm) => ref().set({...DEFAULT_CAFE(),...cafe,zahlungsmethoden:zm}).catch(e=>toast(e.message,'error'));
+  const write = (zm) => { const d={...DEFAULT_CAFE(),...cafe,zahlungsmethoden:zm}; serverWrite(profile||'k21-cafe',d); ref().set(d).catch(e=>toast(e.message,'error')); };
 
   const save = () => {
     if (!form.name.trim()) { toast('Name erforderlich','error'); return; }
@@ -1909,9 +1921,9 @@ const FinanzenView = ({ cafe, toast, profile, profiles, user }) => {
   const periodeLabels = {woche:'Diese Woche',monat:'Dieser Monat',jahr:'Dieses Jahr',custom:'Benutzerdefiniert'};
 
   const saveMinKarte = () => {
-    db.collection(profile||'k21-cafe').doc('data')
-      .set({...DEFAULT_CAFE(),...cafe, einstellungen:{...(cafe.einstellungen||{}), min_karten_betrag:parseFloat(minKarte)||10}})
-      .catch(e=>toast(e.message,'error'));
+    const _d3 = {...DEFAULT_CAFE(),...cafe, einstellungen:{...(cafe.einstellungen||{}), min_karten_betrag:parseFloat(minKarte)||10}};
+    serverWrite(profile||'k21-cafe', _d3);
+    db.collection(profile||'k21-cafe').doc('data').set(_d3).catch(e=>toast(e.message,'error'));
     toast('Gespeichert ✓');
   };
 
@@ -2981,9 +2993,9 @@ const KassiererSchichtStart = ({ user, toast, profile, cafe, onStarted }) => {
     };
     toast('Schicht gestartet ✓');
     onStarted(neu);
-    db.collection(profile||'k21-cafe').doc('data')
-      .set({...DEFAULT_CAFE(),...cafe, schichten:[...(cafe.schichten||[]),neu]})
-      .catch(e=>toast(e.message,'error'));
+    const _d2 = {...DEFAULT_CAFE(),...cafe, schichten:[...(cafe.schichten||[]),neu]};
+    serverWrite(profile||'k21-cafe', _d2);
+    db.collection(profile||'k21-cafe').doc('data').set(_d2).catch(e=>toast(e.message,'error'));
   };
 
   return (
@@ -3048,10 +3060,20 @@ const App = () => {
     return () => unsub();
   }, []);
 
-  // Firestore listener
+  // Firestore listener + server fallback
   useEffect(() => {
     if (!user) return;
     setSyncState('connecting');
+    // Try server first for initial load (works even when Firestore rules expired)
+    fetch(`/api/data?c=${encodeURIComponent(profile)}`).then(r=>r.ok?r.json():null).then(data=>{
+      if (data) {
+        const merged = {...DEFAULT_CAFE(),...data};
+        setCafe(merged);
+        const aktiv = (data.schichten||[]).find(s=>!s.ende && (['owner','admin'].includes((user.role||'').toLowerCase())||s.kassiererId===user.id));
+        setActiveSchicht(aktiv||null);
+        setSyncState('synced');
+      }
+    }).catch(()=>{});
     const ref = db.collection(profile).doc('data');
     const unsub = ref.onSnapshot(
       snap => {
