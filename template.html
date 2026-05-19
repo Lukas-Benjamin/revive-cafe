@@ -141,8 +141,8 @@ const DEFAULT_CAFE = () => ({
   produkte: [],
   kategorien: [],
   zahlungsmethoden: [
-    {id:'bar',   name:'Bar',   emoji:'💵', aktiv:true},
-    {id:'karte', name:'Karte', emoji:'💳', aktiv:true},
+    {id:'bar',   name:'Bar',   aktiv:true},
+    {id:'karte', name:'Karte', aktiv:true},
   ],
   schichten: [],
   bestellungen: [],
@@ -355,7 +355,7 @@ const KasseView = ({ cafe, user, toast, activeSchicht, profile }) => {
     setWarenkorb(prev => {
       const ex = prev.find(i=>i.produkt_id===p.id);
       if (ex) return prev.map(i=>i.produkt_id===p.id?{...i,menge:i.menge+1}:i);
-      return [...prev, {produkt_id:p.id,name:p.name,preis:p.preis,menge:1,emoji:p.emoji}];
+      return [...prev, {produkt_id:p.id,name:p.name,preis:p.preis,menge:1}];
     });
   };
 
@@ -405,7 +405,7 @@ const KasseView = ({ cafe, user, toast, activeSchicht, profile }) => {
                   <span className="absolute top-2 right-2 w-5 h-5 rounded-full flex items-center justify-center text-xs font-bold text-white"
                     style={{background:'#000000',fontSize:'10px'}}>{inCart.menge}</span>
                 )}
-                <div className="text-2xl mb-1">{p.emoji||'🍵'}</div>
+                
                 <div className="text-xs font-semibold text-slate-800 leading-tight">{p.name}</div>
                 <div className="text-xs font-bold mt-1" style={{color:kat?.farbe||'#6366f1'}}>{fmtEur(p.preis)}</div>
               </button>
@@ -430,7 +430,7 @@ const KasseView = ({ cafe, user, toast, activeSchicht, profile }) => {
           )}
           {warenkorb.map(item => (
             <div key={item.produkt_id} className="flex items-center gap-2 px-2 py-2 rounded-xl glass-hover">
-              <span className="text-base">{item.emoji||'🍵'}</span>
+              
               <div style={{flex:1,minWidth:0}}>
                 <div className="text-xs font-semibold text-slate-800 truncate">{item.name}</div>
                 <div className="text-xs text-slate-500">{fmtEur(item.preis * item.menge)}</div>
@@ -619,7 +619,7 @@ const CheckoutModal = ({ warenkorb, gesamt, cafe, schicht, user, toast, onClose,
                     title={disabled?`Mindestbetrag: ${fmtEur(m.mindestbetrag)}`:''}
                     className={`pill transition-all disabled:opacity-40 ${aktuelleId===m.id?'text-white':'text-slate-600 bg-white border border-black/10'}`}
                     style={aktuelleId===m.id?{background: m.gutschein?'#6d28d9':'#000000'}:{}}>
-                    {m.gutschein ? '🎁 ' : ''}{m.name}
+                    {m.name}
                     {(m.mindestbetrag||0)>0 && <span className="ml-1 opacity-60">Min. {fmtEur(m.mindestbetrag)}</span>}
                   </button>
                 );
@@ -764,7 +764,7 @@ const BestellungenView = ({ cafe, user, toast, activeSchicht, profile }) => {
                         {a.fertig && <SI p={IC.check} size={10} stroke={3}/>}
                       </button>
                     )}
-                    <span className="text-sm text-slate-700">{a.emoji||''} {a.name} x{a.menge}</span>
+                    <span className="text-sm text-slate-700">{a.name} ×{a.menge}</span>
                     <span className="text-xs text-slate-400 ml-auto">{fmtEur(a.preis*a.menge)}</span>
                   </div>
                 ))}
@@ -900,7 +900,7 @@ const SchichtView = ({ cafe, user, toast, activeSchicht, setActiveSchicht, profi
       <div className="glass rounded-2xl glow p-6 mb-4">
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-sm font-bold text-slate-800">Aktive Schicht</h2>
-          <span className="pill" style={{background:'#d1fae5',color:'#065f46'}}>● Läuft</span>
+          <span className="pill" style={{background:'#d1fae5',color:'#065f46'}}>Läuft</span>
         </div>
         <div className="grid grid-cols-2 gap-4 mb-4">
           {[
@@ -1244,7 +1244,7 @@ const ZahlungsMethodenView = ({ cafe, toast, profile }) => {
 
       {methoden.length===0 && (
         <div className="text-center py-16 text-slate-400 text-sm">
-          <div className="text-3xl mb-3">💳</div>Noch keine Zahlungsmethoden
+          Noch keine Zahlungsmethoden
         </div>
       )}
 
@@ -1376,6 +1376,7 @@ const FinanzenView = ({ cafe, toast, profile, profiles, user }) => {
   const [cmpFromB,   setCmpFromB]   = useState('');
   const [cmpToB,     setCmpToB]     = useState('');
   const [selProdukte,setSelProdukte]= useState([]);
+  const [selSchicht, setSelSchicht] = useState(null);
 
   // Load all areas for Gesamt view
   useEffect(() => {
@@ -1439,7 +1440,7 @@ const FinanzenView = ({ cafe, toast, profile, profiles, user }) => {
   const stornoCount   = filterBy(allStorniert,[rs,re]).length;
 
   const schichten = useMemo(()=>
-    sourceList.flatMap(src=>(src.data.schichten||[]).map(s=>({...s,_area:src.label})))
+    sourceList.flatMap(src=>(src.data.schichten||[]).map(s=>({...s,_area:src.label,_areaId:src.id})))
       .sort((a,b)=>new Date(b.start)-new Date(a.start)),
     [sourceList]);
   const periodeSchichten = useMemo(()=>schichten.filter(s=>{
@@ -1466,7 +1467,7 @@ const FinanzenView = ({ cafe, toast, profile, profiles, user }) => {
   const topProdukte = useMemo(()=>{
     const map={};
     periodeB.forEach(b=>(b.artikel||[]).forEach(a=>{
-      if(!map[a.name]) map[a.name]={name:a.name,emoji:a.emoji||'',betrag:0,count:0};
+      if(!map[a.name]) map[a.name]={name:a.name,betrag:0,count:0};
       map[a.name].betrag+=a.preis*a.menge; map[a.name].count+=a.menge;
     }));
     return Object.values(map).sort((a,b)=>b.betrag-a.betrag).slice(0,10);
@@ -1738,7 +1739,7 @@ const FinanzenView = ({ cafe, toast, profile, profiles, user }) => {
           <button onClick={()=>setGesamt(g=>!g)}
             className={`pill transition-all font-semibold ${gesamt?'text-white':'text-slate-600 bg-white border border-black/10'}`}
             style={gesamt?{background:'#6366f1'}:{}}>
-            🌐 Alle Bereiche {gesamt && allData.length ? `(${allData.length})` : ''}
+            Alle Bereiche {gesamt && allData.length ? `(${allData.length})` : ''}
           </button>
         )}
         <div style={{flex:'1 1 0',minWidth:0}}/>
@@ -1920,6 +1921,54 @@ const FinanzenView = ({ cafe, toast, profile, profiles, user }) => {
               </div>
             )}
           </div>
+
+          {/* Top Produkte */}
+          {topProdukte.length > 0 && (
+            <div className="glass rounded-2xl p-5 glow">
+              <h3 className="text-sm font-bold text-slate-700 mb-4">Top Produkte</h3>
+              <div className="flex flex-col gap-2.5">
+                {topProdukte.slice(0,8).map((p,i)=>(
+                  <div key={p.name} className="flex items-center gap-3">
+                    <span className="text-xs font-bold text-slate-400 w-4 text-right flex-shrink-0">{i+1}</span>
+                    <span className="text-xs text-slate-600 truncate flex-shrink-0" style={{width:'110px'}}>{p.name}</span>
+                    <div className="flex-1 rounded-full overflow-hidden" style={{height:'7px',background:'#f1f5f9'}}>
+                      <div style={{height:'100%',width:`${(p.betrag/topProdukte[0].betrag*100).toFixed(1)}%`,background:'#000000',borderRadius:'9px',transition:'width .4s'}}/>
+                    </div>
+                    <span className="text-xs text-slate-400 flex-shrink-0" style={{width:'32px',textAlign:'right'}}>{p.count}x</span>
+                    <span className="text-xs font-semibold text-slate-700 flex-shrink-0" style={{width:'56px',textAlign:'right'}}>{fmtEur(p.betrag)}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Weitere Kennzahlen */}
+          {periodeB.length > 0 && (()=>{
+            const peakHour = stunden.indexOf(Math.max(...stunden));
+            const peakUmsatz = stunden[peakHour];
+            const maxDay = wochentage.reduce((a,b)=>b.umsatz>a.umsatz?b:a,wochentage[0]);
+            const cashTotal = zahlungsBreakdown.filter(([a])=>a==='Bar'||a==='Bargeld').reduce((s,[,v])=>s+v,0);
+            const cardTotal = zahlungsBreakdown.filter(([a])=>a==='Karte'||a==='EC'||a==='Giro').reduce((s,[,v])=>s+v,0);
+            const umsatzProSchicht = periodeSchichten.length ? periodeUmsatz/periodeSchichten.length : 0;
+            return (
+              <div className="grid gap-3" style={{gridTemplateColumns:'repeat(auto-fill,minmax(150px,1fr))'}}>
+                {[
+                  {label:'Stornierungen', val:stornoCount, sub: stornoCount>0?'im Zeitraum':'', col:'#ef4444'},
+                  {label:'Peak-Stunde',   val:`${peakHour}:00`, sub:fmtEur(peakUmsatz), col:'#f59e0b'},
+                  {label:'Stärkster Tag', val:maxDay.label, sub:fmtEur(maxDay.umsatz), col:'#10b981'},
+                  periodeSchichten.length ? {label:'Ø Umsatz/Schicht', val:fmtEur(umsatzProSchicht), sub:`${periodeSchichten.length} Schichten`, col:'#6366f1'} : null,
+                  cashTotal>0  ? {label:'Bar-Anteil',  val:`${periodeUmsatz>0?(cashTotal/periodeUmsatz*100).toFixed(0):0}%`, sub:fmtEur(cashTotal), col:'#475569'} : null,
+                  cardTotal>0  ? {label:'Karten-Anteil',val:`${periodeUmsatz>0?(cardTotal/periodeUmsatz*100).toFixed(0):0}%`, sub:fmtEur(cardTotal), col:'#6366f1'} : null,
+                ].filter(Boolean).map(({label,val,sub,col})=>(
+                  <div key={label} className="glass rounded-2xl p-4 glow" style={{borderLeft:`3px solid ${col}`}}>
+                    <div className="text-xs text-slate-400 mb-1">{label}</div>
+                    <div className="text-lg font-bold" style={{color:col}}>{val}</div>
+                    {sub && <div className="text-xs text-slate-400 mt-0.5">{sub}</div>}
+                  </div>
+                ))}
+              </div>
+            );
+          })()}
         </div>
       )}
 
@@ -2151,7 +2200,7 @@ const FinanzenView = ({ cafe, toast, profile, profiles, user }) => {
               return (
                 <div key={p.name} className="flex items-center gap-3 py-2.5" style={{borderBottom:'1px solid rgba(0,0,0,0.05)'}}>
                   <span className="text-xs font-bold text-slate-400 w-5 text-center">{i+1}</span>
-                  <span className="text-base">{p.emoji}</span>
+                  
                   <div style={{flex:1}}>
                     <div className="flex items-center justify-between mb-1">
                       <span className="text-sm font-semibold text-slate-800">{p.name}</span>
@@ -2193,7 +2242,9 @@ const FinanzenView = ({ cafe, toast, profile, profiles, user }) => {
             {periodeSchichten.length===0 && <div className="text-xs text-slate-400 text-center py-8">Keine Schichten im Zeitraum</div>}
             <div className="flex flex-col">
               {periodeSchichten.slice(0,30).map(s=>(
-                <div key={s.id} className="flex items-center justify-between py-3" style={{borderBottom:'1px solid rgba(0,0,0,0.05)'}}>
+                <div key={s.id} className="flex items-center justify-between py-3 rounded-xl px-2 -mx-2 cursor-pointer hover:bg-slate-50 transition-colors"
+                  style={{borderBottom:'1px solid rgba(0,0,0,0.05)'}}
+                  onClick={()=>setSelSchicht(s)}>
                   <div>
                     <div className="flex items-center gap-2">
                       <span className="text-sm font-semibold text-slate-700">{s.kassiererName}</span>
@@ -2206,14 +2257,125 @@ const FinanzenView = ({ cafe, toast, profile, profiles, user }) => {
                       {s.kassenende!=null && s.ende && ` · Ende: ${fmtEur(s.kassenende||0)}`}
                     </div>
                   </div>
-                  <div className="text-right">
-                    <div className="text-sm font-bold text-slate-800">{fmtEur(s.umsatz||0)}</div>
-                    <div className="text-xs text-slate-400">{s.bestellungen_count||0} Best.</div>
+                  <div className="flex items-center gap-3">
+                    <div className="text-right">
+                      <div className="text-sm font-bold text-slate-800">{fmtEur(s.umsatz||0)}</div>
+                      <div className="text-xs text-slate-400">{s.bestellungen_count||0} Best.</div>
+                    </div>
+                    <SI p={IC.chevRight} size={14} stroke={2} style={{color:'#cbd5e1'}}/>
                   </div>
                 </div>
               ))}
             </div>
           </div>
+
+          {/* Schicht-Detail-Modal */}
+          {selSchicht && (()=>{
+            const sB = allBestellungen.filter(b=>b.schicht_id===selSchicht.id);
+            const sUmsatz = sB.reduce((s,b)=>s+b.gesamt,0);
+            const sZahlung = {};
+            sB.forEach(b=>(b.zahlung||[]).forEach(z=>{ sZahlung[z.name||z.art]=(sZahlung[z.name||z.art]||0)+z.betrag; }));
+            const sZahlArr = Object.entries(sZahlung).sort((a,b)=>b[1]-a[1]);
+            const sProd = {};
+            sB.forEach(b=>(b.artikel||[]).forEach(a=>{ if(!sProd[a.name]) sProd[a.name]={name:a.name,betrag:0,count:0}; sProd[a.name].betrag+=a.preis*a.menge; sProd[a.name].count+=a.menge; }));
+            const sTopProd = Object.values(sProd).sort((a,b)=>b.count-a.count).slice(0,8);
+            const dauer = selSchicht.ende ? (()=>{ const ms=new Date(selSchicht.ende)-new Date(selSchicht.start); const h=Math.floor(ms/3600000); const m=Math.floor((ms%3600000)/60000); return `${h}h ${m}m`; })() : 'Läuft noch';
+            const diff = selSchicht.kassenende!=null && selSchicht.kassenstart!=null ? selSchicht.kassenende-selSchicht.kassenstart : null;
+            return (
+              <div className="modal-overlay" style={{position:'fixed',inset:0,zIndex:5000,display:'flex',alignItems:'center',justifyContent:'center',padding:'16px',background:'rgba(0,0,0,0.75)'}}
+                onClick={e=>{ if(e.target===e.currentTarget) setSelSchicht(null); }}>
+                <div className="glass rounded-2xl glow w-full" style={{maxWidth:'680px',maxHeight:'92vh',overflowY:'auto'}}>
+                  {/* Header */}
+                  <div className="flex items-center justify-between px-5 py-4" style={{borderBottom:'1px solid rgba(0,0,0,0.08)',position:'sticky',top:0,background:'rgba(255,255,255,0.99)',zIndex:10}}>
+                    <div>
+                      <h3 className="font-semibold text-slate-800 text-sm">Schicht: {selSchicht.kassiererName}</h3>
+                      <div className="text-xs text-slate-400 mt-0.5">{fmtDateTime(selSchicht.start)}{selSchicht.ende?` – ${fmtTime(selSchicht.ende)}`:' (aktiv)'} · {dauer}</div>
+                    </div>
+                    <button onClick={()=>setSelSchicht(null)} className="text-slate-400 hover:text-slate-700 transition-all"><SI p={IC.x} size={15}/></button>
+                  </div>
+                  <div className="p-5 flex flex-col gap-5">
+                    {/* KPIs */}
+                    <div className="grid gap-3" style={{gridTemplateColumns:'repeat(auto-fill,minmax(130px,1fr))'}}>
+                      {[
+                        {label:'Umsatz',       val:fmtEur(sUmsatz),                    col:'#000000'},
+                        {label:'Bestellungen', val:sB.length,                           col:'#6366f1'},
+                        {label:'Dauer',        val:dauer,                               col:'#06b6d4'},
+                        {label:'Ø Bestellung', val:sB.length?fmtEur(sUmsatz/sB.length):'—', col:'#f59e0b'},
+                        diff!=null ? {label:'Kassendifferenz', val:(diff>=0?'+':'')+fmtEur(diff), col:diff<0?'#ef4444':'#10b981'} : null,
+                        selSchicht.kassenstart!=null ? {label:'Kassenstart',val:fmtEur(selSchicht.kassenstart||0), col:'#475569'} : null,
+                        selSchicht.kassenende!=null && selSchicht.ende ? {label:'Kassenende',val:fmtEur(selSchicht.kassenende||0), col:'#475569'} : null,
+                      ].filter(Boolean).map(({label,val,col})=>(
+                        <div key={label} className="glass rounded-2xl p-4 glow" style={{borderTop:`3px solid ${col}`}}>
+                          <div className="text-xs text-slate-400 mb-1">{label}</div>
+                          <div className="text-base font-bold" style={{color:col}}>{val}</div>
+                        </div>
+                      ))}
+                    </div>
+                    {/* Zahlungsarten */}
+                    {sZahlArr.length > 0 && (
+                      <div>
+                        <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">Zahlungsarten</h4>
+                        <div className="flex flex-col gap-2">
+                          {sZahlArr.map(([art,betrag])=>(
+                            <div key={art} className="flex items-center gap-2">
+                              <span className="text-xs text-slate-500" style={{width:'80px'}}>{art}</span>
+                              <div className="flex-1 rounded-full overflow-hidden" style={{height:'7px',background:'#f1f5f9'}}>
+                                <div style={{height:'100%',width:`${sUmsatz>0?(betrag/sUmsatz*100).toFixed(1):0}%`,background:'#6366f1',borderRadius:'9px'}}/>
+                              </div>
+                              <span className="text-xs font-semibold text-slate-700" style={{width:'60px',textAlign:'right'}}>{fmtEur(betrag)}</span>
+                              <span className="text-xs text-slate-400" style={{width:'36px',textAlign:'right'}}>{sUmsatz>0?(betrag/sUmsatz*100).toFixed(0):'0'}%</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    {/* Top Produkte dieser Schicht */}
+                    {sTopProd.length > 0 && (
+                      <div>
+                        <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">Verkaufte Produkte</h4>
+                        <div className="flex flex-col gap-2">
+                          {sTopProd.map((p,i)=>(
+                            <div key={p.name} className="flex items-center gap-2">
+                              <span className="text-xs font-bold text-slate-300 w-4 text-right">{i+1}</span>
+                              <span className="text-xs text-slate-600 truncate flex-1">{p.name}</span>
+                              <span className="text-xs text-slate-400 flex-shrink-0">{p.count}x</span>
+                              <span className="text-xs font-semibold text-slate-700 flex-shrink-0" style={{width:'56px',textAlign:'right'}}>{fmtEur(p.betrag)}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    {/* Bestellungen */}
+                    <div>
+                      <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">Bestellungen ({sB.length})</h4>
+                      {sB.length===0 && <div className="text-xs text-slate-400 py-4 text-center">Keine Bestellungen in dieser Schicht</div>}
+                      <div className="flex flex-col" style={{maxHeight:'280px',overflowY:'auto'}}>
+                        {sB.slice().sort((a,b)=>new Date(b.erstellt_am)-new Date(a.erstellt_am)).map(b=>(
+                          <div key={b.id} className="flex items-start justify-between py-2.5" style={{borderBottom:'1px solid rgba(0,0,0,0.05)'}}>
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <span className="text-xs font-semibold text-slate-700">#{b.nummer||'—'}</span>
+                                {b.kundenname && <span className="text-xs text-slate-500">{b.kundenname}</span>}
+                                <span className="text-xs text-slate-400">{fmtTime(b.erstellt_am)}</span>
+                              </div>
+                              <div className="text-xs text-slate-400 mt-0.5 truncate">
+                                {(b.artikel||[]).map(a=>`${a.menge}× ${a.name}`).join(', ')}
+                              </div>
+                              {b.notiz && <div className="text-xs text-slate-400 italic mt-0.5">"{b.notiz}"</div>}
+                            </div>
+                            <div className="flex-shrink-0 ml-3 text-right">
+                              <div className="text-sm font-bold text-slate-800">{fmtEur(b.gesamt)}</div>
+                              <div className="text-xs text-slate-400">{(b.zahlung||[]).map(z=>z.name||z.art).join(', ')}</div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
         </div>
       )}
 
@@ -2381,7 +2543,7 @@ const KassiererSchichtStart = ({ user, toast, profile, cafe, onStarted }) => {
   return (
     <div style={{minHeight:'calc(100vh - 100px)',display:'flex',alignItems:'center',justifyContent:'center',padding:'20px'}}>
       <div className="glass rounded-2xl glow p-8 w-full max-w-sm text-center">
-        <div className="text-5xl mb-4">⏰</div>
+        
         <h2 className="text-xl font-bold text-slate-800 mb-1">Schicht starten</h2>
         <p className="text-sm text-slate-500 mb-6">Gib das Startgeld in der Kasse ein</p>
         <input type="number" className={INP+' mb-4 text-center text-xl font-bold'} placeholder="Startgeld (€)"
@@ -2552,7 +2714,7 @@ const App = () => {
             <SyncDot state={syncState}/>
             {activeSchicht && (
               <span className="pill text-xs hidden sm:inline-flex" style={{background:'rgba(16,185,129,0.2)',color:'#34d399'}}>
-                ● Schicht aktiv
+                Schicht aktiv
               </span>
             )}
             <div className="flex items-center gap-2">
