@@ -1548,7 +1548,7 @@ const NAV_ITEMS = [
 // ─── App ──────────────────────────────────────────────────────────────────────
 const App = () => {
   const [user, setUser]           = useState(null);
-  const [cafe, setCafe]           = useState(null);
+  const [cafe, setCafe]           = useState(DEFAULT_CAFE());
   const [syncState, setSyncState] = useState('connecting');
   const [page, setPage]           = useState('kasse');
   const [activeSchicht, setActiveSchicht] = useState(null);
@@ -1616,7 +1616,6 @@ const App = () => {
   const activePage = can(user.role, NAV_ITEMS.find(n=>n.id===page)?.perm) ? page : (visibleNav[0]?.id||'bestellungen');
 
   const renderPage = () => {
-    if (!cafe) return <div className="flex items-center justify-center h-64 text-slate-400 text-sm">Verbinde mit Datenbank…</div>;
     if (user.role==='kassierer' && !activeSchicht)
       return <KassiererSchichtStart user={user} toast={toast} profile={profile} cafe={cafe} onStarted={setActiveSchicht}/>;
     if (activePage==='kasse')            return <KasseView cafe={cafe} user={user} toast={toast} activeSchicht={activeSchicht} profile={profile}/>;
