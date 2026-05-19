@@ -318,7 +318,7 @@ const SignaturePad = ({ label, value, onChange }) => {
 };
 
 // ─── Login View ───────────────────────────────────────────────────────────────
-const LoginView = ({ onLogin, profiles }) => {
+const LoginView = ({ onLogin, profiles, ownerPin: ownerPinProp }) => {
   const [users,    setUsers]    = useState([]);
   const [ready,    setReady]    = useState(false);
   const [name,     setName]     = useState('');
@@ -329,26 +329,38 @@ const LoginView = ({ onLogin, profiles }) => {
 
   const defaultProfile = profiles && profiles.length ? profiles[0].id : 'k21-cafe';
 
+  // Load users via server proxy (bypasses Firestore security rules)
   useEffect(() => {
-    const unsub = db.collection('cafe-users').onSnapshot(
-      snap => { setUsers(snap.docs.map(d=>({id:d.id,...d.data()}))); setReady(true); },
-      () => setReady(true)
-    );
-    return () => unsub();
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const r = await fetch('/api/users?c=cafe-users');
+        if (!r.ok) throw new Error('server');
+        const data = await r.json();
+        if (!cancelled) { setUsers(data); setReady(true); return; }
+      } catch {}
+      // Fallback: direct Firestore
+      const unsub = db.collection('cafe-users').onSnapshot(
+        snap => { if (!cancelled) { setUsers(snap.docs.map(d=>({id:d.id,...d.data()}))); setReady(true); } },
+        () => { if (!cancelled) setReady(true); }
+      );
+      return () => unsub();
+    };
+    load();
+    return () => { cancelled = true; };
   }, []);
 
+  const effectiveOwnerPin = ownerPinProp || OWNER_PIN;
   const allNames = [OWNER_NAME, ...users.map(u=>u.name)];
   const filtered = name.trim() ? allNames.filter(n=>n.toLowerCase().includes(name.toLowerCase())) : allNames;
 
   const tryLogin = () => {
     const n = name.trim();
     if (!n || !pin) { setErr('Bitte Name und PIN eingeben'); return; }
-    // Owner: works immediately, no Firebase needed
-    if (n.toLowerCase() === OWNER_NAME.toLowerCase() && pin === OWNER_PIN) {
+    if (n.toLowerCase() === OWNER_NAME.toLowerCase() && pin === effectiveOwnerPin) {
       onLogin({id:'__owner__', name:OWNER_NAME, role:'owner'}, defaultProfile);
       return;
     }
-    // Other users: need Firebase
     if (!ready) { setErr('Verbindung läuft…'); return; }
     const u = users.find(x => x.name.toLowerCase() === n.toLowerCase());
     if (u && String(u.pin) === String(pin)) { onLogin(u, defaultProfile); }
@@ -2771,8 +2783,13 @@ const PersonenView = ({ toast, profile, user }) => {
 
   const changeMyPin = async () => {
     if (!myPin.trim()) return;
-    if (user?.id && user.id !== '__owner__') {
-      await db.collection('cafe-users').doc(user.id).update({pin: myPin.trim()}).catch(()=>{});
+    if (user?.id === '__owner__') {
+      // Owner PIN → save to server/Firestore config
+      await fetch('/api/admin-pin',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({pin:myPin.trim()})}).catch(()=>{});
+    } else if (user?.id) {
+      // Regular user → update via server proxy AND Firestore
+      await fetch(`/api/users/${user.id}?c=cafe-users`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({pin:myPin.trim()})}).catch(()=>{});
+      db.collection('cafe-users').doc(user.id).update({pin:myPin.trim()}).catch(()=>{});
     }
     setMyPin(''); setPinOK(true); setTimeout(()=>setPinOK(false),2500);
     toast('PIN gespeichert ✓');
@@ -2781,26 +2798,45 @@ const PersonenView = ({ toast, profile, user }) => {
   const COLORS = ['#6366f1','#8b5cf6','#ec4899','#ef4444','#f97316','#f59e0b','#10b981','#06b6d4'];
 
   useEffect(() => {
-    const unsub = db.collection('cafe-users').onSnapshot(
-      snap => setUsers(snap.docs.map(d=>({id:d.id,...d.data()}))),
-      () => {}
-    );
-    return () => unsub();
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const r = await fetch('/api/users?c=cafe-users');
+        if (r.ok) { const d = await r.json(); if (!cancelled) setUsers(d); return; }
+      } catch {}
+      const unsub = db.collection('cafe-users').onSnapshot(
+        snap => { if (!cancelled) setUsers(snap.docs.map(d=>({id:d.id,...d.data()}))); },
+        () => {}
+      );
+      return () => unsub();
+    };
+    load();
+    return () => { cancelled = true; };
   }, []);
 
-  const save = () => {
+  const save = async () => {
     if (!form.name.trim()||!form.pin.trim()) { toast('Name und PIN erforderlich','error'); return; }
     const data = {name:form.name.trim(),pin:form.pin.trim(),role:form.role,farbe:form.farbe,areaAccess:form.areaAccess||'__all__'};
     setModal(null);
-    if (modal==='add') {
-      db.collection('cafe-users').add(data).then(()=>toast('Person hinzugefügt')).catch(e=>toast(e.message,'error'));
-    } else {
-      db.collection('cafe-users').doc(modal).update(data).then(()=>toast('Person aktualisiert')).catch(e=>toast(e.message,'error'));
-    }
+    try {
+      if (modal==='add') {
+        const r = await fetch('/api/users?c=cafe-users',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});
+        if (r.ok) { toast('Person hinzugefügt'); return; }
+      } else {
+        const r = await fetch(`/api/users/${modal}?c=cafe-users`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});
+        if (r.ok) { toast('Person aktualisiert'); return; }
+      }
+    } catch {}
+    // Firestore fallback
+    if (modal==='add') db.collection('cafe-users').add(data).then(()=>toast('Person hinzugefügt')).catch(e=>toast(e.message,'error'));
+    else db.collection('cafe-users').doc(modal).update(data).then(()=>toast('Person aktualisiert')).catch(e=>toast(e.message,'error'));
   };
 
   const del = async (id) => {
-    await db.collection('cafe-users').doc(id).delete();
+    try {
+      await fetch(`/api/users/${id}?c=cafe-users`,{method:'DELETE'});
+    } catch {}
+    db.collection('cafe-users').doc(id).delete().catch(()=>{});
     toast('Person gelöscht','warn');
   };
 
@@ -2993,6 +3029,12 @@ const App = () => {
   const [headerEdit, setHeaderEdit]           = useState(null);
   const [headerEditName, setHeaderEditName]   = useState('');
   const [headerEditColor, setHeaderEditColor] = useState('#8b5cf6');
+  const [ownerPin, setOwnerPin]   = useState('');
+
+  // Load owner PIN from server (for cross-device admin PIN change)
+  useEffect(() => {
+    fetch('/api/admin-pin').then(r=>r.json()).then(d=>{ if(d.pin) setOwnerPin(d.pin); }).catch(()=>{});
+  }, []);
 
   // Load profiles — realtime so all devices stay in sync
   useEffect(() => {
@@ -3053,11 +3095,10 @@ const App = () => {
 
   if (!user) return <LoginView onLogin={(u, pid) => {
     setUser(u);
-    // Start on first profile the user has access to
     const accessible = profiles.filter(p => getAreaAccess(u, p.id) !== 'none');
     const startProfile = accessible.find(p=>p.id===pid) || accessible[0];
     if (startProfile) setProfile(startProfile.id);
-  }} profiles={profiles}/>;
+  }} profiles={profiles} ownerPin={ownerPin}/>;
 
   const isAdminRole = ['owner','admin'].includes((user.role||'').toLowerCase());
   const visibleNav = NAV_ITEMS.filter(n=>{
