@@ -128,6 +128,15 @@ app.post('/api/data', async (req, res) => {
   res.json({ ok: true });
 });
 
+// GET /api/doc?c=config&d=cafe-profiles  → read any single document
+app.get('/api/doc', async (req, res) => {
+  const col = req.query.c; const docId = req.query.d;
+  if (!col || !docId) return res.status(400).json({ error: 'missing c or d' });
+  const data = await fsGetDoc(col, docId);
+  if (data === null) return res.status(503).json({ error: 'Firestore nicht erreichbar' });
+  res.json(data);
+});
+
 // GET /api/users?c=cafe-users   → list all users in a collection
 app.get('/api/users', async (req, res) => {
   const col = req.query.c || 'cafe-users';
