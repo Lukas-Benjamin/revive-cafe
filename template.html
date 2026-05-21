@@ -93,6 +93,8 @@ const IC = {
   refresh:  "M23 4v6h-6M1 20v-6h6M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15",
   cash:     ["M12 1v22","M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6"],
   download: "M3 17v3h18v-3M12 3v11m-4-4l4 4 4-4",
+  box:      ["M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z","M3.27 6.96L12 12.01l8.73-5.05","M12 22.08V12"],
+  warn:     ["M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z","M12 9v4M12 17h.01"],
 };
 
 // ─── Utilities ────────────────────────────────────────────────────────────────
@@ -149,7 +151,9 @@ const DEFAULT_CAFE = () => ({
   ],
   schichten: [],
   bestellungen: [],
-  einstellungen: { min_karten_betrag: 10, waehrung: 'EUR' }
+  einstellungen: { min_karten_betrag: 10, waehrung: 'EUR' },
+  // inventar: { [produktId]: { bestand: number, warnschwelle: number, aktiv: boolean } }
+  inventar: {},
 });
 
 // Server-side write helper — routes all cafe data writes through the server proxy
@@ -178,6 +182,7 @@ const can = (role, action) => {
     einstellungen:     ['owner','admin'],
     personen:          ['owner','admin','teamleiter'],
     stornieren:        ['owner','admin','teamleiter'],
+    inventar:          ['owner','admin','teamleiter'],
   };
   return (map[action]||[]).includes(r);
 };
@@ -508,17 +513,35 @@ const KasseView = ({ cafe, user, toast, activeSchicht, profile }) => {
           {angezeigt.map(p => {
             const kat = cafe.kategorien.find(k=>k.id===p.kategorie_id);
             const inCart = warenkorb.find(i=>i.produkt_id===p.id);
+            const inv = (cafe.inventar||{})[p.id];
+            const istGetrackt = inv?.aktiv;
+            const bestand = inv?.bestand ?? null;
+            const warnschwelle = inv?.warnschwelle ?? 3;
+            const ausverkauft = istGetrackt && bestand === 0;
+            const tiefBestand = istGetrackt && bestand > 0 && bestand <= warnschwelle;
             return (
-              <button key={p.id} onClick={()=>addToCart(p)}
-                className="product-btn glass rounded-2xl p-3 text-left relative hover:shadow-md"
-                style={{minHeight:'90px'}}>
-                {inCart && (
+              <button key={p.id} onClick={()=>{ if(!ausverkauft) addToCart(p); }}
+                className="product-btn glass rounded-2xl p-3 text-left relative hover:shadow-md transition-all"
+                style={{minHeight:'90px', opacity: ausverkauft ? 0.45 : 1, cursor: ausverkauft ? 'not-allowed' : 'pointer'}}>
+                {inCart && !ausverkauft && (
                   <span className="absolute top-2 right-2 w-5 h-5 rounded-full flex items-center justify-center text-xs font-bold text-white"
                     style={{background:'#000000',fontSize:'10px'}}>{inCart.menge}</span>
                 )}
-                
-                <div className="text-xs font-semibold text-slate-800 leading-tight">{p.name}</div>
-                <div className="text-xs font-bold mt-1" style={{color:kat?.farbe||'#6366f1'}}>{fmtEur(p.preis)}</div>
+                {ausverkauft && (
+                  <span className="absolute top-2 right-2 text-xs font-bold px-1.5 py-0.5 rounded-full"
+                    style={{background:'rgba(239,68,68,0.15)',color:'#ef4444',fontSize:'9px'}}>0</span>
+                )}
+                {tiefBestand && (
+                  <span className="absolute top-2 right-2 text-xs font-bold px-1.5 py-0.5 rounded-full"
+                    style={{background:'rgba(245,158,11,0.15)',color:'#d97706',fontSize:'9px'}}>⚠{bestand}</span>
+                )}
+                {istGetrackt && bestand > warnschwelle && (
+                  <span className="absolute top-2 right-2 text-xs font-bold px-1.5 py-0.5 rounded-full"
+                    style={{background:'rgba(16,185,129,0.12)',color:'#10b981',fontSize:'9px'}}>{bestand}</span>
+                )}
+                <div className="text-xs font-semibold leading-tight" style={{color: ausverkauft?'#94a3b8':'#1e293b',marginTop: istGetrackt?'14px':'0'}}>{p.name}</div>
+                <div className="text-xs font-bold mt-1" style={{color: ausverkauft?'#94a3b8':(kat?.farbe||'#6366f1')}}>{fmtEur(p.preis)}</div>
+                {ausverkauft && <div className="text-xs text-red-400 font-semibold mt-0.5">Ausverkauft</div>}
               </button>
             );
           })}
@@ -679,9 +702,20 @@ const CheckoutModal = ({ warenkorb, gesamt, cafe, schicht, user, toast, onClose,
     const updSchichten = (cafe.schichten||[]).map(s=>
       s.id!==schicht.id ? s : {...s, bestellungen_count:(s.bestellungen_count||0)+1, umsatz:(s.umsatz||0)+gesamt}
     );
+    // Deduct inventory for tracked products
+    const updInventar = {...(cafe.inventar||{})};
+    warenkorb.forEach(item => {
+      const inv = updInventar[item.produkt_id];
+      if (inv && inv.aktiv) {
+        const neuBestand = Math.max(0, (inv.bestand||0) - item.menge);
+        updInventar[item.produkt_id] = {...inv, bestand: neuBestand};
+        if (neuBestand <= (inv.warnschwelle||0) && neuBestand > 0) toast(`⚠ ${item.name}: nur noch ${neuBestand} übrig`, 'warn');
+        if (neuBestand === 0) toast(`⛔ ${item.name}: Bestand aufgebraucht`, 'warn');
+      }
+    });
     toast(`Bestellung #${nummer} gespeichert ✓`);
     onSuccess();
-    const _d1 = {...DEFAULT_CAFE(),...cafe, schichten:updSchichten, bestellungen:[...(cafe.bestellungen||[]),neueBestellung]};
+    const _d1 = {...DEFAULT_CAFE(),...cafe, schichten:updSchichten, bestellungen:[...(cafe.bestellungen||[]),neueBestellung], inventar:updInventar};
     serverWrite(profile||'k21-cafe', _d1);
     db.collection(profile||'k21-cafe').doc('data').set(_d1).catch(e=>toast('Fehler: '+e.message,'error'));
   };
@@ -3046,12 +3080,185 @@ const KassiererSchichtStart = ({ user, toast, profile, cafe, onStarted }) => {
 };
 
 // ─── Nav config ───────────────────────────────────────────────────────────────
+// ─── InventarView ─────────────────────────────────────────────────────────────
+const InventarView = ({ cafe, toast, profile }) => {
+  const ref = () => db.collection(profile||'k21-cafe').doc('data');
+  const write = (patch) => {
+    const d = {...DEFAULT_CAFE(),...cafe,...patch};
+    serverWrite(profile||'k21-cafe', d);
+    ref().set(d).catch(e=>toast(e.message,'error'));
+  };
+
+  const inventar = cafe.inventar||{};
+  const produkte = (cafe.produkte||[]).filter(p=>p.aktiv!==false);
+  const kategorien = cafe.kategorien||[];
+
+  const getInv = pid => inventar[pid] || {bestand:0, warnschwelle:3, aktiv:false};
+
+  const updInv = (pid, patch) => {
+    const cur = getInv(pid);
+    write({inventar:{...inventar, [pid]:{...cur,...patch}}});
+  };
+
+  // Stats
+  const getrackt = produkte.filter(p=>getInv(p.id).aktiv);
+  const ausverkauft = getrackt.filter(p=>getInv(p.id).bestand===0);
+  const tiefBestand = getrackt.filter(p=>{const inv=getInv(p.id);return inv.bestand>0&&inv.bestand<=inv.warnschwelle;});
+
+  // Group by category
+  const grouped = kategorien.map(k=>({
+    kat:k,
+    items: produkte.filter(p=>p.kategorie_id===k.id),
+  })).filter(g=>g.items.length>0);
+  const ohneKat = produkte.filter(p=>!p.kategorie_id||!kategorien.find(k=>k.id===p.kategorie_id));
+
+  return (
+    <div className="p-4 space-y-5 max-w-2xl mx-auto">
+      <div className="flex items-center gap-3">
+        <div>
+          <h2 className="text-xl font-black">Inventar</h2>
+          <p className="text-xs text-slate-400 mt-0.5">Bestand verwalten · wird beim Verkauf automatisch abgezogen</p>
+        </div>
+      </div>
+
+      {/* Stats */}
+      <div className="grid grid-cols-3 gap-3">
+        <div className="glass rounded-2xl p-4 text-center">
+          <div className="text-2xl font-black">{getrackt.length}</div>
+          <div className="text-xs text-slate-500 mt-0.5">Getrackt</div>
+        </div>
+        <div className="glass rounded-2xl p-4 text-center" style={{borderLeft: tiefBestand.length>0?'3px solid #f59e0b':'undefined'}}>
+          <div className="text-2xl font-black" style={{color:tiefBestand.length>0?'#d97706':'inherit'}}>{tiefBestand.length}</div>
+          <div className="text-xs text-slate-500 mt-0.5">Tief­bestand</div>
+        </div>
+        <div className="glass rounded-2xl p-4 text-center" style={{borderLeft: ausverkauft.length>0?'3px solid #ef4444':'undefined'}}>
+          <div className="text-2xl font-black" style={{color:ausverkauft.length>0?'#ef4444':'inherit'}}>{ausverkauft.length}</div>
+          <div className="text-xs text-slate-500 mt-0.5">Ausverkauft</div>
+        </div>
+      </div>
+
+      {/* Alerts */}
+      {(ausverkauft.length>0||tiefBestand.length>0) && (
+        <div className="glass rounded-2xl p-4 space-y-2" style={{borderLeft:'3px solid #f59e0b'}}>
+          <div className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">Achtung</div>
+          {ausverkauft.map(p=>(
+            <div key={p.id} className="flex items-center gap-2 text-sm">
+              <span className="w-2 h-2 rounded-full flex-shrink-0" style={{background:'#ef4444'}}/>
+              <span className="font-semibold text-red-600">{p.name}</span>
+              <span className="text-slate-400 text-xs">— Ausverkauft</span>
+            </div>
+          ))}
+          {tiefBestand.map(p=>{
+            const inv=getInv(p.id);
+            return (
+              <div key={p.id} className="flex items-center gap-2 text-sm">
+                <span className="w-2 h-2 rounded-full flex-shrink-0" style={{background:'#f59e0b'}}/>
+                <span className="font-semibold text-amber-700">{p.name}</span>
+                <span className="text-slate-400 text-xs">— noch {inv.bestand} übrig (Warnschwelle: {inv.warnschwelle})</span>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Product list */}
+      {[...grouped, ohneKat.length>0?{kat:{id:'__none',name:'Ohne Kategorie',farbe:'#94a3b8'},items:ohneKat}:null].filter(Boolean).map(({kat,items})=>(
+        <div key={kat.id}>
+          <div className="flex items-center gap-2 mb-2">
+            <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{background:kat.farbe||'#94a3b8'}}/>
+            <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">{kat.name}</span>
+          </div>
+          <div className="space-y-2">
+            {items.map(p=>{
+              const inv = getInv(p.id);
+              const statusColor = !inv.aktiv ? '#94a3b8' : inv.bestand===0 ? '#ef4444' : inv.bestand<=inv.warnschwelle ? '#f59e0b' : '#10b981';
+              const statusLabel = !inv.aktiv ? 'Nicht getrackt' : inv.bestand===0 ? 'Ausverkauft' : inv.bestand<=inv.warnschwelle ? `⚠ ${inv.bestand} übrig` : `${inv.bestand} übrig`;
+              return (
+                <div key={p.id} className="glass rounded-2xl overflow-hidden">
+                  {/* Header row */}
+                  <div className="flex items-center gap-3 px-4 py-3">
+                    <div className="flex-1 min-w-0">
+                      <div className="font-semibold text-sm text-slate-800">{p.name}</div>
+                      <div className="text-xs mt-0.5 font-semibold" style={{color:statusColor}}>{statusLabel}</div>
+                    </div>
+                    {/* Quick +/- buttons when tracked */}
+                    {inv.aktiv && (
+                      <div className="flex items-center gap-1">
+                        <button onClick={()=>updInv(p.id,{bestand:Math.max(0,(inv.bestand||0)-1)})}
+                          className="w-8 h-8 rounded-xl flex items-center justify-center font-bold text-slate-600 hover:bg-black/8 transition-all"
+                          style={{background:'rgba(0,0,0,0.05)'}}>−</button>
+                        <span className="text-sm font-black w-8 text-center" style={{color:statusColor}}>{inv.bestand}</span>
+                        <button onClick={()=>updInv(p.id,{bestand:(inv.bestand||0)+1})}
+                          className="w-8 h-8 rounded-xl flex items-center justify-center font-bold text-slate-600 hover:bg-black/8 transition-all"
+                          style={{background:'rgba(0,0,0,0.05)'}}>+</button>
+                      </div>
+                    )}
+                    {/* Tracking toggle */}
+                    <button onClick={()=>updInv(p.id,{aktiv:!inv.aktiv})}
+                      className="w-10 h-6 rounded-full transition-all flex-shrink-0 relative"
+                      style={{background:inv.aktiv?'#000':'rgba(0,0,0,0.12)'}}>
+                      <span className="absolute top-0.5 w-5 h-5 rounded-full bg-white shadow transition-all"
+                        style={{left:inv.aktiv?'calc(100% - 22px)':'2px'}}/>
+                    </button>
+                  </div>
+
+                  {/* Expanded settings when tracked */}
+                  {inv.aktiv && (
+                    <div className="border-t border-black/5 px-4 py-3 grid grid-cols-2 gap-3" style={{background:'rgba(0,0,0,0.02)'}}>
+                      <div>
+                        <label className="text-xs font-semibold text-slate-500 block mb-1.5">Aktueller Bestand</label>
+                        <div className="flex items-center gap-1">
+                          <input type="number" value={inv.bestand||0} min={0}
+                            onChange={e=>updInv(p.id,{bestand:Math.max(0,parseInt(e.target.value)||0)})}
+                            className="w-full rounded-xl border border-black/10 px-3 py-1.5 text-sm font-bold text-center" style={{background:'#fff'}}/>
+                        </div>
+                      </div>
+                      <div>
+                        <label className="text-xs font-semibold text-slate-500 block mb-1.5">Warnschwelle</label>
+                        <input type="number" value={inv.warnschwelle??3} min={0}
+                          onChange={e=>updInv(p.id,{warnschwelle:Math.max(0,parseInt(e.target.value)||0)})}
+                          className="w-full rounded-xl border border-black/10 px-3 py-1.5 text-sm font-bold text-center" style={{background:'#fff'}}/>
+                      </div>
+                      <div className="col-span-2">
+                        <label className="text-xs font-semibold text-slate-500 block mb-1.5">Bestand auffüllen auf</label>
+                        <div className="flex gap-2">
+                          {[10,20,50,100].map(n=>(
+                            <button key={n} onClick={()=>updInv(p.id,{bestand:n})}
+                              className="flex-1 py-1.5 text-xs font-bold rounded-xl transition-all"
+                              style={{background:'rgba(0,0,0,0.06)',color:'#374151'}}>
+                              {n}
+                            </button>
+                          ))}
+                          <button onClick={()=>{const v=prompt(`Bestand für ${p.name} eingeben:`);if(v&&!isNaN(v))updInv(p.id,{bestand:Math.max(0,parseInt(v))});}}
+                            className="flex-1 py-1.5 text-xs font-bold rounded-xl transition-all"
+                            style={{background:'rgba(0,0,0,0.06)',color:'#374151'}}>
+                            ✏
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      ))}
+
+      {produkte.length === 0 && (
+        <div className="text-center py-16 text-slate-400 text-sm">Keine Produkte — zuerst Produkte anlegen</div>
+      )}
+    </div>
+  );
+};
+
 const NAV_ITEMS = [
   { id:'kasse',            label:'Kasse',         icon:IC.cart,    perm:'kasse' },
   { id:'bestellungen',     label:'Bestellungen',  icon:IC.orders,  perm:'bestellungen' },
   { id:'schicht',          label:'Schicht',       icon:IC.shift,   perm:'schicht' },
   { id:'produkte',         label:'Produkte',      icon:IC.tag,     perm:'produkte' },
   { id:'zahlungsmethoden', label:'Zahlungen',     icon:IC.cash,    perm:'zahlungsmethoden' },
+  { id:'inventar',         label:'Inventar',      icon:IC.box,     perm:'inventar' },
   { id:'finanzen',         label:'Finanzen',      icon:IC.chart,   perm:'finanzen' },
   { id:'personen',         label:'Personen',      icon:IC.users,   perm:'personen' },
 ];
@@ -3171,6 +3378,7 @@ const App = () => {
     if (activePage==='schicht')          return <SchichtView cafe={cafe} user={user} toast={toast} activeSchicht={activeSchicht} setActiveSchicht={setActiveSchicht} profile={profile}/>;
     if (activePage==='produkte')         return <ProdukteView cafe={cafe} user={user} toast={toast} profile={profile}/>;
     if (activePage==='zahlungsmethoden') return <ZahlungsMethodenView cafe={cafe} toast={toast} profile={profile}/>;
+    if (activePage==='inventar')         return <InventarView cafe={cafe} toast={toast} profile={profile}/>;
     if (activePage==='finanzen')         return <FinanzenView cafe={cafe} toast={toast} profile={profile} profiles={profiles} user={user}/>;
     if (activePage==='personen')         return <PersonenView toast={toast} profile={profile} user={user}/>;
     return null;
