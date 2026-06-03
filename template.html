@@ -182,16 +182,35 @@ const DEFAULT_CAFE = () => ({
   inventar: {},
 });
 
+// ─── Auth helpers ─────────────────────────────────────────────────────────────
+const getSessToken = () => { try { return sessionStorage.getItem('k21-sess') || ''; } catch { return ''; } };
+const setSessToken = t => { try { t ? sessionStorage.setItem('k21-sess', t) : sessionStorage.removeItem('k21-sess'); } catch {} };
+const aFetch = (url, opts = {}) => fetch(url, { ...opts, headers: { ...(opts.headers||{}), 'X-Session': getSessToken() } });
+
+// Retry a Firestore (or any Promise-returning) write up to 3 times with backoff
+const withRetry = (fn, onErr) => {
+  const attempt = (n) => fn().catch(e => {
+    if (n >= 3) { if (onErr) onErr(e); return; }
+    return new Promise(res => setTimeout(res, n * 600)).then(() => attempt(n + 1));
+  });
+  return attempt(1);
+};
+
 // Server-side write helper — routes all cafe data writes through the server proxy
 // so they work even when Firestore security rules are expired
 async function serverWrite(col, data) {
-  try {
-    await fetch(`/api/data?c=${encodeURIComponent(col)}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(data)
-    });
-  } catch {}
+  const MAX_ATTEMPTS = 3;
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    try {
+      const r = await aFetch(`/api/data?c=${encodeURIComponent(col)}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data)
+      });
+      if (r.ok) return;
+    } catch {}
+    if (attempt < MAX_ATTEMPTS) await new Promise(res => setTimeout(res, attempt * 500));
+  }
 }
 
 // ─── Role permissions ─────────────────────────────────────────────────────────
@@ -361,9 +380,8 @@ const SignaturePad = ({ label, value, onChange }) => {
 };
 
 // ─── Login View ───────────────────────────────────────────────────────────────
-const LoginView = ({ onLogin, profiles, ownerPin: ownerPinProp }) => {
+const LoginView = ({ onLogin, profiles }) => {
   const [users,    setUsers]    = useState([]);
-  const [ready,    setReady]    = useState(false);
   const [name,     setName]     = useState('');
   const [pin,      setPin]      = useState('');
   const [showPin,  setShowPin]  = useState(false);
@@ -372,7 +390,7 @@ const LoginView = ({ onLogin, profiles, ownerPin: ownerPinProp }) => {
 
   const defaultProfile = profiles && profiles.length ? profiles[0].id : 'k21-cafe';
 
-  // Load users via server proxy (bypasses Firestore security rules)
+  // Load user names for the autocomplete dropdown (names only, no PINs needed)
   useEffect(() => {
     let cancelled = false;
     const load = async () => {
@@ -380,12 +398,12 @@ const LoginView = ({ onLogin, profiles, ownerPin: ownerPinProp }) => {
         const r = await fetch('/api/users?c=cafe-users');
         if (!r.ok) throw new Error('server');
         const data = await r.json();
-        if (!cancelled) { setUsers(data); setReady(true); return; }
+        if (!cancelled) { setUsers(data); return; }
       } catch {}
-      // Fallback: direct Firestore
+      // Fallback: direct Firestore (names only for autocomplete)
       const unsub = adb.collection('cafe-users').onSnapshot(
-        snap => { if (!cancelled) { setUsers(snap.docs.map(d=>({id:d.id,...d.data()}))); setReady(true); } },
-        () => { if (!cancelled) setReady(true); }
+        snap => { if (!cancelled) { setUsers(snap.docs.map(d=>({id:d.id,...d.data()}))); } },
+        () => {}
       );
       return () => unsub();
     };
@@ -393,21 +411,31 @@ const LoginView = ({ onLogin, profiles, ownerPin: ownerPinProp }) => {
     return () => { cancelled = true; };
   }, []);
 
-  const effectiveOwnerPin = ownerPinProp || OWNER_PIN;
   const allNames = [OWNER_NAME, ...users.map(u=>u.name)];
   const filtered = name.trim() ? allNames.filter(n=>n.toLowerCase().includes(name.toLowerCase())) : allNames;
 
-  const tryLogin = () => {
+  const tryLogin = async () => {
     const n = name.trim();
     if (!n || !pin) { setErr('Bitte Name und PIN eingeben'); return; }
-    if (n.toLowerCase() === OWNER_NAME.toLowerCase() && pin === effectiveOwnerPin) {
-      onLogin({id:'__owner__', name:OWNER_NAME, role:'owner'}, defaultProfile);
-      return;
+    setErr('');
+    try {
+      const r = await fetch('/api/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: n, pin })
+      });
+      const d = await r.json();
+      if (r.ok && d.ok) {
+        setSessToken(d.token || '');
+        const { token: _t, exp: _e, ...userInfo } = d;
+        onLogin(userInfo, defaultProfile);
+      } else {
+        setErr(d.error || 'Name oder PIN nicht korrekt');
+        setPin('');
+      }
+    } catch {
+      setErr('Verbindungsfehler – bitte erneut versuchen');
     }
-    if (!ready) { setErr('Verbindung läuft…'); return; }
-    const u = users.find(x => x.name.toLowerCase() === n.toLowerCase());
-    if (u && String(u.pin) === String(pin)) { onLogin(u, defaultProfile); }
-    else { setErr('Name oder PIN nicht korrekt'); setPin(''); }
   };
 
   const INP_L = "w-full border rounded-xl px-4 py-3 text-slate-900 placeholder-slate-400 text-sm transition-all";
@@ -743,7 +771,7 @@ const CheckoutModal = ({ warenkorb, gesamt, cafe, schicht, user, toast, onClose,
     onSuccess();
     const _d1 = {...DEFAULT_CAFE(),...cafe, schichten:updSchichten, bestellungen:[...(cafe.bestellungen||[]),neueBestellung], inventar:updInventar};
     serverWrite(profile||'k21-cafe', _d1);
-    adb.collection(profile||'k21-cafe').doc('data').set(_d1).catch(e=>toast('Fehler: '+e.message,'error'));
+    withRetry(() => adb.collection(profile||'k21-cafe').doc('data').set(_d1), e=>toast('Fehler: '+e.message,'error'));
   };
 
   return (
@@ -887,7 +915,7 @@ const BestellungenView = ({ cafe, user, toast, activeSchicht, profile }) => {
   }, [cafe.bestellungen, filter, activeSchicht]);
 
   const ref = () => adb.collection(profile||'k21-cafe').doc('data');
-  const write = (patch) => { const d={...DEFAULT_CAFE(),...cafe,...patch}; serverWrite(profile||'k21-cafe',d); ref().set(d).catch(e=>toast(e.message,'error')); };
+  const write = (patch) => { const d={...DEFAULT_CAFE(),...cafe,...patch}; serverWrite(profile||'k21-cafe',d); withRetry(() => ref().set(d), e=>toast(e.message,'error')); };
 
   const markItemFertig = (bestellung, artikelIdx) => {
     const updBestellungen = (cafe.bestellungen||[]).map(b => {
@@ -992,7 +1020,7 @@ const SchichtView = ({ cafe, user, toast, activeSchicht, setActiveSchicht, profi
   const [sig2, setSig2] = useState('');
   const [abschluss, setAbschluss]           = useState(null); // {code, kassenende, umsatz, ...}
   const ref  = () => adb.collection(profile||'k21-cafe').doc('data');
-  const write = (patch) => { const d={...DEFAULT_CAFE(),...cafe,...patch}; serverWrite(profile||'k21-cafe',d); ref().set(d).catch(e=>toast(e.message,'error')); };
+  const write = (patch) => { const d={...DEFAULT_CAFE(),...cafe,...patch}; serverWrite(profile||'k21-cafe',d); withRetry(() => ref().set(d), e=>toast(e.message,'error')); };
   const role  = (user.role||'').toLowerCase();
   const isAdmin = ['owner','admin'].includes(role);
 
@@ -1028,7 +1056,7 @@ const SchichtView = ({ cafe, user, toast, activeSchicht, setActiveSchicht, profi
     };
     setActiveSchicht(neu);
     toast('Schicht gestartet ✓');
-    { const _d={...DEFAULT_CAFE(),...cafe, schichten:[...(cafe.schichten||[]),neu]}; serverWrite(profile||'k21-cafe',_d); ref().set(_d).catch(e=>toast(e.message,'error')); }
+    { const _d={...DEFAULT_CAFE(),...cafe, schichten:[...(cafe.schichten||[]),neu]}; serverWrite(profile||'k21-cafe',_d); withRetry(() => ref().set(_d), e=>toast(e.message,'error')); }
   };
 
   const endeSchicht = () => {
@@ -1059,7 +1087,7 @@ const SchichtView = ({ cafe, user, toast, activeSchicht, setActiveSchicht, profi
       barEinnahmen,
       sig1, sig2,
     });
-    { const _d={...DEFAULT_CAFE(),...cafe, schichten:(cafe.schichten||[]).map(s=>s.id===activeSchicht.id?updated:s)}; serverWrite(profile||'k21-cafe',_d); ref().set(_d).catch(e=>toast(e.message,'error')); }
+    { const _d={...DEFAULT_CAFE(),...cafe, schichten:(cafe.schichten||[]).map(s=>s.id===activeSchicht.id?updated:s)}; serverWrite(profile||'k21-cafe',_d); withRetry(() => ref().set(_d), e=>toast(e.message,'error')); }
   };
 
   const schichtBestellungen = useMemo(() =>
@@ -1397,7 +1425,7 @@ const ProdukteView = ({ cafe, toast, profile }) => {
 
   const COLORS = ['#6366f1','#8b5cf6','#ec4899','#ef4444','#f97316','#f59e0b','#10b981','#06b6d4','#3b82f6'];
   const ref   = () => adb.collection(profile||'k21-cafe').doc('data');
-  const write = (patch) => { const d={...DEFAULT_CAFE(),...cafe,...patch}; serverWrite(profile||'k21-cafe',d); ref().set(d).catch(e=>toast(e.message,'error')); };
+  const write = (patch) => { const d={...DEFAULT_CAFE(),...cafe,...patch}; serverWrite(profile||'k21-cafe',d); withRetry(() => ref().set(d), e=>toast(e.message,'error')); };
 
   const saveProdukt = () => {
     if (!form.name.trim()||!form.preis) { toast('Name und Preis erforderlich','error'); return; }
@@ -1624,7 +1652,7 @@ const ZahlungsMethodenView = ({ cafe, toast, profile }) => {
   const methoden = cafe.zahlungsmethoden || [];
 
   const ref   = () => adb.collection(profile||'k21-cafe').doc('data');
-  const write = (zm) => { const d={...DEFAULT_CAFE(),...cafe,zahlungsmethoden:zm}; serverWrite(profile||'k21-cafe',d); ref().set(d).catch(e=>toast(e.message,'error')); };
+  const write = (zm) => { const d={...DEFAULT_CAFE(),...cafe,zahlungsmethoden:zm}; serverWrite(profile||'k21-cafe',d); withRetry(() => ref().set(d), e=>toast(e.message,'error')); };
 
   const save = () => {
     if (!form.name.trim()) { toast('Name erforderlich','error'); return; }
@@ -1983,7 +2011,7 @@ const FinanzenView = ({ cafe, toast, profile, profiles, user }) => {
   const saveMinKarte = () => {
     const _d3 = {...DEFAULT_CAFE(),...cafe, einstellungen:{...(cafe.einstellungen||{}), min_karten_betrag:parseFloat(minKarte)||10}};
     serverWrite(profile||'k21-cafe', _d3);
-    adb.collection(profile||'k21-cafe').doc('data').set(_d3).catch(e=>toast(e.message,'error'));
+    withRetry(() => adb.collection(profile||'k21-cafe').doc('data').set(_d3), e=>toast(e.message,'error'));
     toast('Gespeichert ✓');
   };
 
@@ -2885,10 +2913,10 @@ const PersonenView = ({ toast, profile, user }) => {
     if (!myPin.trim()) return;
     if (user?.id === '__owner__') {
       // Owner PIN → save to server/Firestore config
-      await fetch('/api/admin-pin',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({pin:myPin.trim()})}).catch(()=>{});
+      await aFetch('/api/admin-pin',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({pin:myPin.trim()})}).catch(()=>{});
     } else if (user?.id) {
       // Regular user → update via server proxy AND Firestore
-      await fetch(`/api/users/${user.id}?c=cafe-users`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({pin:myPin.trim()})}).catch(()=>{});
+      await aFetch(`/api/users/${user.id}?c=cafe-users`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({pin:myPin.trim()})}).catch(()=>{});
       adb.collection('cafe-users').doc(user.id).update({pin:myPin.trim()}).catch(()=>{});
     }
     setMyPin(''); setPinOK(true); setTimeout(()=>setPinOK(false),2500);
@@ -2901,7 +2929,7 @@ const PersonenView = ({ toast, profile, user }) => {
     let cancelled = false;
     const load = async () => {
       try {
-        const r = await fetch('/api/users?c=cafe-users');
+        const r = await aFetch('/api/users?c=cafe-users');
         if (r.ok) { const d = await r.json(); if (!cancelled) setUsers(d); return; }
       } catch {}
       const unsub = adb.collection('cafe-users').onSnapshot(
@@ -2920,10 +2948,10 @@ const PersonenView = ({ toast, profile, user }) => {
     setModal(null);
     try {
       if (modal==='add') {
-        const r = await fetch('/api/users?c=cafe-users',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});
+        const r = await aFetch('/api/users?c=cafe-users',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});
         if (r.ok) { toast('Person hinzugefügt'); return; }
       } else {
-        const r = await fetch(`/api/users/${modal}?c=cafe-users`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});
+        const r = await aFetch(`/api/users/${modal}?c=cafe-users`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});
         if (r.ok) { toast('Person aktualisiert'); return; }
       }
     } catch {}
@@ -2934,7 +2962,7 @@ const PersonenView = ({ toast, profile, user }) => {
 
   const del = async (id) => {
     try {
-      await fetch(`/api/users/${id}?c=cafe-users`,{method:'DELETE'});
+      await aFetch(`/api/users/${id}?c=cafe-users`,{method:'DELETE'});
     } catch {}
     adb.collection('cafe-users').doc(id).delete().catch(()=>{});
     toast('Person gelöscht','warn');
@@ -3083,7 +3111,7 @@ const KassiererSchichtStart = ({ user, toast, profile, cafe, onStarted }) => {
     onStarted(neu);
     const _d2 = {...DEFAULT_CAFE(),...cafe, schichten:[...(cafe.schichten||[]),neu]};
     serverWrite(profile||'k21-cafe', _d2);
-    adb.collection(profile||'k21-cafe').doc('data').set(_d2).catch(e=>toast(e.message,'error'));
+    withRetry(() => adb.collection(profile||'k21-cafe').doc('data').set(_d2), e=>toast(e.message,'error'));
   };
 
   return (
@@ -3112,7 +3140,7 @@ const InventarView = ({ cafe, toast, profile }) => {
   const write = (patch) => {
     const d = {...DEFAULT_CAFE(),...cafe,...patch};
     serverWrite(profile||'k21-cafe', d);
-    ref().set(d).catch(e=>toast(e.message,'error'));
+    withRetry(() => ref().set(d), e=>toast(e.message,'error'));
   };
 
   const inventar = cafe.inventar||{};
@@ -3306,7 +3334,7 @@ const App = () => {
 
   // Load owner PIN from server (for cross-device admin PIN change)
   useEffect(() => {
-    fetch('/api/admin-pin').then(r=>r.json()).then(d=>{ if(d.pin) setOwnerPin(d.pin); }).catch(()=>{});
+    aFetch('/api/admin-pin').then(r=>r.json()).then(d=>{ if(d.pin) setOwnerPin(d.pin); }).catch(()=>{});
   }, []);
 
   // Load profiles — realtime so all devices stay in sync
@@ -3326,7 +3354,7 @@ const App = () => {
     if (!user) return;
     setSyncState('connecting');
     // Try server first for initial load (works even when Firestore rules expired)
-    fetch(`/api/data?c=${encodeURIComponent(profile)}`).then(r=>r.ok?r.json():null).then(data=>{
+    aFetch(`/api/data?c=${encodeURIComponent(profile)}`).then(r=>r.ok?r.json():null).then(data=>{
       if (data) {
         const merged = {...DEFAULT_CAFE(),...data};
         setCafe(merged);
@@ -3381,7 +3409,7 @@ const App = () => {
     const accessible = profiles.filter(p => getAreaAccess(u, p.id) !== 'none');
     const startProfile = accessible.find(p=>p.id===pid) || accessible[0];
     if (startProfile) setProfile(startProfile.id);
-  }} profiles={profiles} ownerPin={ownerPin}/>;
+  }} profiles={profiles}/>;
 
   const isAdminRole = ['owner','admin'].includes((user.role||'').toLowerCase());
   const visibleNav = NAV_ITEMS.filter(n=>{
@@ -3468,7 +3496,7 @@ const App = () => {
               <Avatar name={user.name} color={user.farbe||'#8b5cf6'} size={28}/>
               <span className="text-white text-xs font-semibold hidden md:block">{user.name}</span>
             </div>
-            <button onClick={()=>setUser(null)} className="text-white/40 hover:text-white transition-all" title="Abmelden">
+            <button onClick={()=>{ setSessToken(''); aFetch('/api/logout',{method:'POST'}); setUser(null); }} className="text-white/40 hover:text-white transition-all" title="Abmelden">
               <SI p={IC.logout} size={15}/>
             </button>
           </div>

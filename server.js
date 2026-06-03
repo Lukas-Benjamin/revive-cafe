@@ -1,6 +1,8 @@
 const express   = require('express');
 const fs        = require('fs');
 const path      = require('path');
+const crypto    = require('crypto');
+const bcrypt    = require('bcryptjs');
 const Babel     = require('@babel/standalone');
 const postcss   = require('postcss');
 const tailwind  = require('tailwindcss');
@@ -8,6 +10,14 @@ const tailwind  = require('tailwindcss');
 const app  = express();
 const PORT = process.env.PORT || 3002;
 app.use(express.json());
+
+// ─── Security headers ─────────────────────────────────────────────────────────
+app.use((req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'SAMEORIGIN');
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  next();
+});
 
 // ─── Firebase config ────────────────────────────────────────────────────────
 const API_KEY     = 'AIzaSyAB9ugtPhwbXTJc9mZia6a_x54LEYLz5PE';
@@ -112,7 +122,119 @@ async function fsGetDoc(col, docId) {
   } catch(e) { console.warn('fsGetDoc error:', e.message); return null; }
 }
 
+// ─── HMAC session system ──────────────────────────────────────────────────────
+const SESSION_SECRET = process.env.SESSION_SECRET ||
+  crypto.createHash('sha256').update((process.env.FIREBASE_API_KEY || '') + ':session-v1').digest('hex');
+const SESSION_TTL = 7 * 24 * 3600_000;
+
+function createSession(user) {
+  const payload = { ...user, exp: Date.now() + SESSION_TTL };
+  const data = Buffer.from(JSON.stringify(payload)).toString('base64url');
+  const sig  = crypto.createHmac('sha256', SESSION_SECRET).update(data).digest('base64url');
+  return `${data}.${sig}`;
+}
+
+function verifySession(token) {
+  if (!token) return null;
+  try {
+    const dot = token.lastIndexOf('.');
+    if (dot < 0) return null;
+    const data = token.slice(0, dot), sig = token.slice(dot + 1);
+    const expected = crypto.createHmac('sha256', SESSION_SECRET).update(data).digest('base64url');
+    const a = Buffer.from(sig, 'ascii'), b = Buffer.from(expected, 'ascii');
+    if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return null;
+    const payload = JSON.parse(Buffer.from(data, 'base64url').toString('utf8'));
+    if (Date.now() > payload.exp) return null;
+    return payload;
+  } catch { return null; }
+}
+
+function authMiddleware(req, res, next) {
+  const payload = verifySession(req.headers['x-session']);
+  if (!payload) return res.status(401).json({ error: 'Sitzung abgelaufen – bitte neu anmelden' });
+  req.user = payload;
+  next();
+}
+
+// ─── Rate limiter (simple in-memory) ─────────────────────────────────────────
+const _loginAttempts = new Map();
+function loginRateLimit(req, res, next) {
+  const ip = req.ip || req.connection.remoteAddress || 'unknown';
+  const now = Date.now();
+  const entry = _loginAttempts.get(ip) || { count: 0, resetAt: now + 60_000 };
+  if (now > entry.resetAt) { entry.count = 0; entry.resetAt = now + 60_000; }
+  entry.count++;
+  _loginAttempts.set(ip, entry);
+  if (entry.count > 20) return res.status(429).json({ error: 'Zu viele Anmeldeversuche – bitte warten' });
+  next();
+}
+
 // ─── API routes ──────────────────────────────────────────────────────────────
+// POST /api/login  { name, pin }  → verify credentials, return HMAC session token
+app.post('/api/login', loginRateLimit, async (req, res) => {
+  try {
+    const { name, pin } = req.body || {};
+    if (!name || !pin) return res.status(400).json({ error: 'Name und PIN erforderlich' });
+
+    const nameLC = String(name).trim().toLowerCase();
+    const pinStr = String(pin).trim();
+
+    // ── Owner / admin login ───────────────────────────────────────────────────
+    if (nameLC === 'admin') {
+      const authDoc = await fsGetDoc('config', 'auth');
+      const storedPin = authDoc?.adminPin || null;
+      if (!storedPin) {
+        // No PIN set — accept default hardcoded fallback (first-run only)
+        const DEFAULT_OWNER_PIN = 'K21ADMIN';
+        if (pinStr !== DEFAULT_OWNER_PIN) return res.status(401).json({ error: 'Name oder PIN nicht korrekt' });
+      } else {
+        // Compare: bcrypt hash or plaintext legacy
+        const isHash = String(storedPin).startsWith('$2');
+        const ok = isHash
+          ? await bcrypt.compare(pinStr, storedPin)
+          : String(storedPin) === pinStr;
+        if (!ok) return res.status(401).json({ error: 'Name oder PIN nicht korrekt' });
+        // Auto-migrate plaintext to bcrypt
+        if (!isHash) {
+          const hashed = await bcrypt.hash(pinStr, 12);
+          await fsSet('config', 'auth', { ...authDoc, adminPin: hashed });
+        }
+      }
+      const userInfo = { id: '__owner__', name: 'Admin', role: 'owner' };
+      return res.json({ ok: true, ...userInfo, token: createSession(userInfo) });
+    }
+
+    // ── Regular user login ────────────────────────────────────────────────────
+    const users = await fsGetCollection('cafe-users');
+    if (!users) return res.status(503).json({ error: 'Firestore nicht erreichbar' });
+
+    const u = users.find(x => (x.name || '').trim().toLowerCase() === nameLC);
+    if (!u) return res.status(401).json({ error: 'Name oder PIN nicht korrekt' });
+
+    const storedPin = u.pin != null ? String(u.pin) : '';
+    const isHash = storedPin.startsWith('$2');
+    const ok = isHash
+      ? await bcrypt.compare(pinStr, storedPin)
+      : storedPin === pinStr;
+    if (!ok) return res.status(401).json({ error: 'Name oder PIN nicht korrekt' });
+
+    // Auto-migrate plaintext PIN to bcrypt
+    if (!isHash) {
+      const hashed = await bcrypt.hash(pinStr, 12);
+      await fsSet('cafe-users', u.id, { ...u, pin: hashed });
+    }
+
+    const userInfo = { id: u.id, name: u.name, role: u.role || 'kassierer', farbe: u.farbe || '#8b5cf6', areaAccess: u.areaAccess || '__all__' };
+    return res.json({ ok: true, ...userInfo, token: createSession(userInfo) });
+  } catch (e) {
+    console.error('login error:', e.message);
+    res.status(500).json({ error: 'Interner Fehler' });
+  }
+});
+
+// POST /api/logout
+app.post('/api/logout', (req, res) => res.json({ ok: true }));
+
 // GET /api/data?c=k21-cafe  → read the 'data' document
 app.get('/api/data', async (req, res) => {
   const col = req.query.c || 'k21-cafe';
@@ -146,21 +268,21 @@ app.get('/api/users', async (req, res) => {
 });
 
 // POST /api/users?c=cafe-users   → create user  { body: user data }
-app.post('/api/users', async (req, res) => {
+app.post('/api/users', authMiddleware, async (req, res) => {
   const col = req.query.c || 'cafe-users';
   const id = await fsSet(col, null, { ...req.body, createdAt: new Date().toISOString() });
   res.json({ id });
 });
 
 // PUT /api/users/:id?c=cafe-users  → update user
-app.put('/api/users/:id', async (req, res) => {
+app.put('/api/users/:id', authMiddleware, async (req, res) => {
   const col = req.query.c || 'cafe-users';
   await fsSet(col, req.params.id, req.body);
   res.json({ ok: true });
 });
 
 // DELETE /api/users/:id?c=cafe-users
-app.delete('/api/users/:id', async (req, res) => {
+app.delete('/api/users/:id', authMiddleware, async (req, res) => {
   const col = req.query.c || 'cafe-users';
   await fsDelete(col, req.params.id);
   res.json({ ok: true });
