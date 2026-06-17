@@ -3306,6 +3306,112 @@ const InventarView = ({ cafe, toast, profile }) => {
   );
 };
 
+// ─── Einstellungen-Seite (owner/admin) ────────────────────────────────────────
+const EinstellungenView = ({ cafe, profile, profiles, saveProfiles, appSettings, saveAppSettings, user, toast }) => {
+  const [appName, setAppName] = useState(appSettings.appName || 'K21 Café');
+  const [waehrung, setWaehrung] = useState((cafe.einstellungen||{}).waehrung || 'EUR');
+  const [minKarte, setMinKarte] = useState((cafe.einstellungen||{}).min_karten_betrag ?? 10);
+  const [edit, setEdit] = useState(null);     // {id|'new', label, color}
+  const [confirmDel, setConfirmDel] = useState(null);
+  const isOwner = (user.role||'').toLowerCase()==='owner';
+
+  const saveCafeEinst = () => {
+    const _d = {...DEFAULT_CAFE(), ...cafe, einstellungen:{...(cafe.einstellungen||{}), waehrung, min_karten_betrag:parseFloat(minKarte)||0}};
+    serverWrite(profile||'k21-cafe', _d);
+    withRetry(() => adb.collection(profile||'k21-cafe').doc('data').set(_d), e=>toast(e.message,'error'));
+    toast('Einstellungen gespeichert ✓');
+  };
+
+  const saveBereich = () => {
+    if (!edit.label.trim()) return;
+    let np;
+    if (edit.id==='new') {
+      const id = edit.label.trim().toLowerCase().replace(/\s+/g,'-').replace(/[^a-z0-9-]/g,'') + '-' + Math.random().toString(36).slice(2,5);
+      np = [...profiles, { id, label:edit.label.trim(), color:edit.color, grad:`linear-gradient(135deg,${edit.color},#000000)` }];
+    } else {
+      np = profiles.map(p => p.id===edit.id ? {...p, label:edit.label.trim(), color:edit.color, grad:`linear-gradient(135deg,${edit.color},#000000)`} : p);
+    }
+    saveProfiles(np); setEdit(null);
+    toast(edit.id==='new' ? 'Bereich erstellt ✓' : 'Bereich gespeichert ✓');
+  };
+
+  const delBereich = (id) => {
+    if (profiles.length<=1) { toast('Mindestens ein Bereich muss bestehen','error'); return; }
+    saveProfiles(profiles.filter(p=>p.id!==id)); setConfirmDel(null);
+    toast('Bereich gelöscht ✓');
+  };
+
+  return (
+    <div className="max-w-lg mx-auto space-y-4">
+      <h1 className="text-xl font-bold grad">Einstellungen</h1>
+
+      <div className="glass rounded-2xl p-4 space-y-3">
+        <h3 className="font-semibold text-sm text-slate-800">Allgemein</h3>
+        <div>
+          <label className="text-slate-400 text-xs block mb-1.5">App-Name</label>
+          <input value={appName} onChange={e=>setAppName(e.target.value)} className={INP}/>
+        </div>
+        <div className="flex gap-3">
+          <div className="flex-1">
+            <label className="text-slate-400 text-xs block mb-1.5">Währung</label>
+            <input value={waehrung} onChange={e=>setWaehrung(e.target.value)} className={INP}/>
+          </div>
+          <div className="flex-1">
+            <label className="text-slate-400 text-xs block mb-1.5">Mindestbetrag Karte ({waehrung})</label>
+            <input type="number" value={minKarte} onChange={e=>setMinKarte(e.target.value)} className={INP}/>
+          </div>
+        </div>
+        <div className="flex gap-2">
+          <button onClick={()=>{ saveAppSettings({...appSettings, appName:appName.trim()||'K21 Café'}); saveCafeEinst(); }}
+            className="flex-1 bg-slate-900 hover:bg-slate-700 text-white font-bold py-2.5 text-sm rounded-xl transition-all">Speichern</button>
+        </div>
+        <p className="text-xs text-slate-400">Währung und Mindestbetrag gelten für den aktuellen Bereich „{(profiles.find(p=>p.id===profile)||{}).label||profile}".</p>
+      </div>
+
+      <div className="glass rounded-2xl p-4 space-y-2">
+        <div className="flex items-center justify-between">
+          <h3 className="font-semibold text-sm text-slate-800">Bereiche / Standorte</h3>
+          {isOwner && <button onClick={()=>setEdit({id:'new',label:'',color:COLOR_SWATCHES[0]})} className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-900 hover:bg-slate-700 text-white text-xs font-semibold rounded-lg transition-all"><SI p={IC.plus} size={13}/>Neuer Bereich</button>}
+        </div>
+        {!isOwner && <p className="text-xs text-slate-400">Nur der Owner kann Bereiche verwalten.</p>}
+        {profiles.map(p=>(
+          <div key={p.id} className="flex items-center gap-3 bg-black/5 rounded-lg px-3 py-2">
+            <span style={{width:12,height:12,borderRadius:'50%',background:p.color||'#8b5cf6',flexShrink:0}}/>
+            <span className="flex-1 text-sm text-slate-700">{p.label}{p.id===profile && <span className="text-slate-400"> · aktiv</span>}</span>
+            {isOwner && confirmDel===p.id ? (
+              <>
+                <button onClick={()=>delBereich(p.id)} className="text-xs text-red-500 font-semibold">Löschen</button>
+                <button onClick={()=>setConfirmDel(null)} className="text-xs text-slate-400">Abbrechen</button>
+              </>
+            ) : isOwner && (
+              <>
+                <button onClick={()=>setEdit({id:p.id,label:p.label,color:p.color||'#8b5cf6'})} className="p-1.5 text-slate-400 hover:text-slate-700"><SI p={IC.edit} size={14}/></button>
+                <button onClick={()=>setConfirmDel(p.id)} className="p-1.5 text-slate-400 hover:text-red-500"><SI p={IC.trash} size={14}/></button>
+              </>
+            )}
+          </div>
+        ))}
+      </div>
+
+      {edit && (
+        <div className="modal-overlay" style={{position:'fixed',inset:0,zIndex:5000,display:'flex',alignItems:'center',justifyContent:'center',padding:16,background:'rgba(0,0,0,0.75)'}} onClick={e=>{if(e.target===e.currentTarget)setEdit(null);}}>
+          <div className="glass rounded-2xl w-full" style={{maxWidth:380}}>
+            <div className="p-5 space-y-4">
+              <h3 className="font-semibold text-slate-800 text-sm">{edit.id==='new'?'Neuer Bereich':'Bereich bearbeiten'}</h3>
+              <div><label className="text-slate-400 text-xs block mb-1.5">Name</label><input autoFocus value={edit.label} onChange={e=>setEdit({...edit,label:e.target.value})} className={INP}/></div>
+              <div><label className="text-slate-400 text-xs block mb-1.5">Farbe</label><ColorPicker value={edit.color} onChange={c=>setEdit({...edit,color:c})}/></div>
+              <div className="flex gap-2">
+                <button onClick={saveBereich} className="flex-1 bg-slate-900 hover:bg-slate-700 text-white font-bold py-2.5 text-sm rounded-xl">Speichern</button>
+                <button onClick={()=>setEdit(null)} className="px-4 py-2.5 bg-black/5 text-slate-400 text-sm rounded-xl">Abbrechen</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
 const NAV_ITEMS = [
   { id:'kasse',            label:'Kasse',         icon:IC.cart,    perm:'kasse' },
   { id:'bestellungen',     label:'Bestellungen',  icon:IC.orders,  perm:'bestellungen' },
@@ -3315,6 +3421,7 @@ const NAV_ITEMS = [
   { id:'inventar',         label:'Inventar',      icon:IC.box,     perm:'inventar' },
   { id:'finanzen',         label:'Finanzen',      icon:IC.chart,   perm:'finanzen' },
   { id:'personen',         label:'Personen',      icon:IC.users,   perm:'personen' },
+  { id:'einstellungen',    label:'Einstellungen', icon:IC.cog,     perm:'einstellungen' },
 ];
 
 // ─── App ──────────────────────────────────────────────────────────────────────
@@ -3327,6 +3434,7 @@ const App = () => {
   const [toasts, toast]           = useToast();
   const [profiles, setProfiles]   = useState(DEFAULT_CAFE_PROFILES);
   const [profile, setProfile]     = useState(DEFAULT_CAFE_PROFILES[0].id);
+  const [appSettings, setAppSettings] = useState({ appName: 'K21 Café' });
   const [headerEdit, setHeaderEdit]           = useState(null);
   const [headerEditName, setHeaderEditName]   = useState('');
   const [headerEditColor, setHeaderEditColor] = useState('#8b5cf6');
@@ -3348,6 +3456,24 @@ const App = () => {
     }, ()=>{});
     return () => unsub();
   }, []);
+
+  // Load app settings (app name) — realtime
+  useEffect(() => {
+    const unsub = adb.collection('config').doc('app-settings').onSnapshot(snap => {
+      const d = snap.data()?.data;
+      if (d) setAppSettings({ appName: 'K21 Café', ...d });
+    }, ()=>{});
+    return () => unsub();
+  }, []);
+
+  const saveProfiles = (np) => {
+    setProfiles(np); CAFE_PROFILES = np;
+    adb.collection('config').doc('cafe-profiles').set({ data: np }).catch(()=>{});
+  };
+  const saveAppSettings = (s) => {
+    setAppSettings(s);
+    adb.collection('config').doc('app-settings').set({ data: s }).catch(()=>{});
+  };
 
   // Firestore listener + server fallback
   useEffect(() => {
@@ -3435,6 +3561,7 @@ const App = () => {
     if (activePage==='inventar')         return <InventarView cafe={cafe} toast={toast} profile={profile}/>;
     if (activePage==='finanzen')         return <FinanzenView cafe={cafe} toast={toast} profile={profile} profiles={profiles} user={user}/>;
     if (activePage==='personen')         return <PersonenView toast={toast} profile={profile} user={user}/>;
+    if (activePage==='einstellungen')    return <EinstellungenView cafe={cafe} profile={profile} profiles={profiles} saveProfiles={saveProfiles} appSettings={appSettings} saveAppSettings={saveAppSettings} user={user} toast={toast}/>;
     return null;
   };
 
@@ -3447,7 +3574,7 @@ const App = () => {
           {/* Logo */}
           <div className="flex items-center gap-2 flex-shrink-0">
             <img src="/logo.png" style={{width:30,height:30,filter:'invert(1)',mixBlendMode:'screen'}} alt="K21"/>
-            <span className="text-white font-bold text-sm hidden sm:block">K21 Café</span>
+            <span className="text-white font-bold text-sm hidden sm:block">{appSettings.appName||'K21 Café'}</span>
           </div>
 
           {/* Area pills – centered, filtered by areaAccess */}
