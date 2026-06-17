@@ -76,6 +76,18 @@
     input[type=number]::-webkit-inner-spin-button,
     input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
     input[type=number] { -moz-appearance: textfield; appearance: textfield; }
+    /* ── Mobile ── */
+    .mob-nav { display:none; }
+    button { -webkit-tap-highlight-color:transparent; }
+    @media (max-width:639px){
+      .desk-nav { display:none!important; }
+      .mob-nav { display:flex!important; overflow-x:auto; scrollbar-width:none; }
+      .mob-nav::-webkit-scrollbar { display:none; }
+      .mob-main-pad { padding-bottom:calc(72px + env(safe-area-inset-bottom,0px))!important; }
+      .cafe-layout { flex-direction:column!important; height:auto!important; overflow:visible!important; }
+      .cafe-products { max-height:52vh; overflow-y:auto!important; }
+      .cafe-cart { width:100%!important; max-height:300px; flex-shrink:0!important; }
+    }
   </style>
 </head>
 <body>
@@ -542,9 +554,9 @@ const KasseView = ({ cafe, user, toast, activeSchicht, profile }) => {
   const clearCart = () => setWarenkorb([]);
 
   return (
-    <div style={{display:'flex',gap:'16px',height:'calc(100vh - 120px)',overflow:'hidden'}}>
+    <div className="cafe-layout" style={{display:'flex',gap:'16px',height:'calc(100vh - 120px)',overflow:'hidden'}}>
       {/* Left: product grid */}
-      <div style={{flex:'1 1 0',overflowY:'auto',paddingRight:'4px'}}>
+      <div className="cafe-products" style={{flex:'1 1 0',overflowY:'auto',paddingRight:'4px'}}>
         {/* Category tabs */}
         <div className="flex flex-wrap gap-2 mb-4">
           <button onClick={()=>setAktivKat('alle')}
@@ -603,7 +615,7 @@ const KasseView = ({ cafe, user, toast, activeSchicht, profile }) => {
       </div>
 
       {/* Right: cart */}
-      <div className="glass rounded-2xl glow flex flex-col" style={{width:'300px',flexShrink:0}}>
+      <div className="cafe-cart glass rounded-2xl glow flex flex-col" style={{width:'300px',flexShrink:0}}>
         <div className="px-4 py-3 flex items-center justify-between" style={{borderBottom:'1px solid rgba(0,0,0,0.08)'}}>
           <span className="font-semibold text-sm text-slate-800 flex items-center gap-2">
             <SI p={IC.bag} size={15}/>Warenkorb
@@ -3670,7 +3682,7 @@ const App = () => {
         </div>
 
         {/* Row 2: Nav tabs */}
-        <div style={{borderTop:'1px solid rgba(255,255,255,0.06)'}}>
+        <div className="desk-nav" style={{borderTop:'1px solid rgba(255,255,255,0.06)'}}>
           <div style={{maxWidth:'1400px',margin:'0 auto',padding:'0 16px',height:'44px',display:'flex',alignItems:'center',justifyContent:'center',gap:'2px',overflowX:'auto',scrollbarWidth:'none'}}>
             {visibleNav.map(n=>(
               <button key={n.id} onClick={()=>setPage(n.id)}
@@ -3687,7 +3699,7 @@ const App = () => {
       </header>
 
       {/* Main content */}
-      <main style={{flex:1,maxWidth:'1400px',margin:'0 auto',padding:'20px',width:'100%'}}>
+      <main className="mob-main-pad" style={{flex:1,maxWidth:'1400px',margin:'0 auto',padding:'20px',width:'100%'}}>
         <div className="up">
           {renderPage()}
         </div>
@@ -3727,6 +3739,15 @@ const App = () => {
         </Modal>
       )}
 
+      {/* Mobile bottom nav */}
+      <nav className="mob-nav" style={{position:'fixed',bottom:0,left:0,right:0,zIndex:200,background:'#000',borderTop:'1px solid rgba(255,255,255,0.1)',paddingBottom:'env(safe-area-inset-bottom,0)'}}>
+        {visibleNav.map(n=>(
+          <button key={n.id} onClick={()=>setPage(n.id)} style={{flex:1,minWidth:52,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',padding:'8px 4px',minHeight:58,color:activePage===n.id?'#fff':'rgba(255,255,255,0.4)',background:'transparent',border:'none',cursor:'pointer',gap:2}}>
+            <SI p={n.icon} size={18}/>
+            <span style={{fontSize:9,fontWeight:600,whiteSpace:'nowrap',overflow:'hidden',maxWidth:52,textOverflow:'ellipsis'}}>{n.label}</span>
+          </button>
+        ))}
+      </nav>
       <ToastContainer toasts={toasts}/>
     </div>
   );
