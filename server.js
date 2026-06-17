@@ -20,15 +20,16 @@ app.use((req, res, next) => {
 });
 
 // ─── Firebase config ────────────────────────────────────────────────────────
-const API_KEY     = 'AIzaSyAB9ugtPhwbXTJc9mZia6a_x54LEYLz5PE';
-const PROJECT_ID  = 'r3zahlen';
+const API_KEY    = process.env.FIREBASE_API_KEY;
+const PROJECT_ID = process.env.FIREBASE_PROJECT_ID || 'r3zahlen';
+if (!API_KEY) { console.error('FEHLER: FIREBASE_API_KEY fehlt in .env'); process.exit(1); }
 const firebaseConfig = JSON.stringify({
   apiKey:            API_KEY,
-  authDomain:        'r3zahlen.firebaseapp.com',
+  authDomain:        process.env.FIREBASE_AUTH_DOMAIN        || `${PROJECT_ID}.firebaseapp.com`,
   projectId:         PROJECT_ID,
-  storageBucket:     'r3zahlen.firebasestorage.app',
-  messagingSenderId: '1071865171603',
-  appId:             '1:1071865171603:web:399ef56359d043e7544766',
+  storageBucket:     process.env.FIREBASE_STORAGE_BUCKET     || `${PROJECT_ID}.firebasestorage.app`,
+  messagingSenderId: process.env.FIREBASE_MESSAGING_SENDER_ID || '',
+  appId:             process.env.FIREBASE_APP_ID             || '',
 });
 
 // ─── Server-side Firestore proxy (bypasses security rules via anon auth) ────
@@ -275,9 +276,12 @@ app.post('/api/users', authMiddleware, async (req, res) => {
 });
 
 // PUT /api/users/:id?c=cafe-users  → update user
+// Merge with the existing document so fields not sent (e.g. pin) are preserved —
+// a bare PATCH would wipe them.
 app.put('/api/users/:id', authMiddleware, async (req, res) => {
   const col = req.query.c || 'cafe-users';
-  await fsSet(col, req.params.id, req.body);
+  const existing = await fsGetDoc(col, req.params.id) || {};
+  await fsSet(col, req.params.id, { ...existing, ...req.body });
   res.json({ ok: true });
 });
 
