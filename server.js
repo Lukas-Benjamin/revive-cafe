@@ -225,7 +225,7 @@ app.post('/api/login', loginRateLimit, async (req, res) => {
       await fsSet('cafe-users', u.id, { ...u, pin: hashed });
     }
 
-    const userInfo = { id: u.id, name: u.name, role: u.role || 'kassierer', farbe: u.farbe || '#8b5cf6', areaAccess: u.areaAccess || '__all__' };
+    const userInfo = { id: u.id, name: u.name, role: u.role || 'kassierer', farbe: u.farbe || '#8b5cf6', areaAccess: u.areaAccess || '__all__', dsgvoConsent: u.dsgvoConsent || false };
     return res.json({ ok: true, ...userInfo, token: createSession(userInfo) });
   } catch (e) {
     console.error('login error:', e.message);

@@ -3455,7 +3455,6 @@ const DsgvoConsent = ({ appName, onAccept }) => (
 
 // ─── App ──────────────────────────────────────────────────────────────────────
 const App = () => {
-  const [dsgvoOk, setDsgvoOk] = useState(() => !!localStorage.getItem(DSGVO_KEY));
   const [user, setUser]           = useState(null);
   const [cafe, setCafe]           = useState(DEFAULT_CAFE());
   const [syncState, setSyncState] = useState('connecting');
@@ -3560,13 +3559,23 @@ const App = () => {
     toast(headerEdit==='new' ? 'Bereich erstellt ✓' : 'Bereich umbenannt ✓');
   };
 
-  if (!dsgvoOk) return <DsgvoConsent appName="K21 Café" onAccept={() => { localStorage.setItem(DSGVO_KEY,'1'); setDsgvoOk(true); }}/>;
   if (!user) return <LoginView onLogin={(u, pid) => {
-    setUser(u);
-    const accessible = profiles.filter(p => getAreaAccess(u, p.id) !== 'none');
+    const withConsent = {...u, dsgvoConsent: u.dsgvoConsent || (u.id==='__owner__' && !!localStorage.getItem('k21-dsgvo-admin'))};
+    setUser(withConsent);
+    const accessible = profiles.filter(p => getAreaAccess(withConsent, p.id) !== 'none');
     const startProfile = accessible.find(p=>p.id===pid) || accessible[0];
     if (startProfile) setProfile(startProfile.id);
   }} profiles={profiles}/>;
+
+  const acceptDsgvo = async () => {
+    if (user.id === '__owner__') {
+      localStorage.setItem('k21-dsgvo-admin', '1');
+    } else {
+      await aFetch(`/api/users/${user.id}?c=cafe-users`, { method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify({dsgvoConsent:true}) });
+    }
+    setUser(u => ({...u, dsgvoConsent: true}));
+  };
+  if (!user.dsgvoConsent) return <DsgvoConsent appName="K21 Café" onAccept={acceptDsgvo}/>;
 
   const isAdminRole = ['owner','admin'].includes((user.role||'').toLowerCase());
   const visibleNav = NAV_ITEMS.filter(n=>{
