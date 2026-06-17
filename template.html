@@ -2,7 +2,7 @@
 <html lang="de">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <title>K21 Café</title>
   <link rel="preconnect" href="https://www.gstatic.com" crossorigin>
   <link rel="dns-prefetch" href="https://unpkg.com">
@@ -78,12 +78,13 @@
     input[type=number] { -moz-appearance: textfield; appearance: textfield; }
     /* ── Mobile ── */
     .mob-nav { display:none; }
-    button { -webkit-tap-highlight-color:transparent; }
+    button { -webkit-tap-highlight-color:transparent; touch-action:manipulation; }
     @media (max-width:639px){
       .desk-nav { display:none!important; }
       .mob-nav { display:flex!important; overflow-x:auto; scrollbar-width:none; }
       .mob-nav::-webkit-scrollbar { display:none; }
       .mob-main-pad { padding-bottom:calc(72px + env(safe-area-inset-bottom,0px))!important; }
+      input, textarea, select { font-size:16px!important; }
       .cafe-layout { flex-direction:column!important; height:auto!important; overflow:visible!important; }
       .cafe-products { max-height:52vh; overflow-y:auto!important; }
       .cafe-cart { width:100%!important; max-height:300px; flex-shrink:0!important; }
