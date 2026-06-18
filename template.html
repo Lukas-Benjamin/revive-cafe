@@ -3466,6 +3466,86 @@ const DsgvoConsent = ({ appName, onAccept }) => (
   </div>
 );
 
+
+// ─── PIN ändern ──────────────────────────────────────────────────────────────
+const PinChangeModal = ({ onClose, onToast }) => {
+  const [oldPin, setOldPin] = useState('');
+  const [newPin, setNewPin] = useState('');
+  const [confPin, setConfPin] = useState('');
+  const [err, setErr] = useState('');
+  const [busy, setBusy] = useState(false);
+  const FLD = "w-full bg-black/5 border border-black/10 rounded-xl px-3 py-2.5 text-sm text-slate-800 placeholder-slate-500";
+  const save = async () => {
+    if (!oldPin) { setErr('Bitte aktuellen PIN eingeben'); return; }
+    if (newPin.length < 4) { setErr('Neuer PIN muss mind. 4 Zeichen haben'); return; }
+    if (newPin !== confPin) { setErr('Neue PINs stimmen nicht überein'); return; }
+    setBusy(true); setErr('');
+    try {
+      const r = await aFetch('/api/change-pin', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({oldPin, newPin}) });
+      const d = await r.json();
+      if (!r.ok) { setErr(d.error || 'Fehler'); setBusy(false); return; }
+      onToast && onToast('PIN geändert ✓');
+      onClose();
+    } catch { setErr('Netzwerkfehler'); setBusy(false); }
+  };
+  return (
+    <Modal title="PIN ändern" onClose={onClose}>
+      <div className="space-y-3">
+        {err && <div style={{background:'#fef2f2',color:'#b91c1c',borderRadius:8,padding:'8px 12px',fontSize:12}}>{err}</div>}
+        <div><label className="text-slate-400 text-xs block mb-1.5">Aktueller PIN</label><input type="password" value={oldPin} onChange={e=>setOldPin(e.target.value)} placeholder="••••" className={FLD} autoFocus/></div>
+        <div><label className="text-slate-400 text-xs block mb-1.5">Neuer PIN</label><input type="password" value={newPin} onChange={e=>setNewPin(e.target.value)} placeholder="••••" className={FLD}/></div>
+        <div><label className="text-slate-400 text-xs block mb-1.5">Neuer PIN bestätigen</label><input type="password" value={confPin} onChange={e=>setConfPin(e.target.value)} placeholder="••••" className={FLD} onKeyDown={e=>e.key==='Enter'&&save()}/></div>
+        <button onClick={save} disabled={busy} style={{background:'#0f172a',color:'#fff',borderRadius:12,padding:'11px',fontSize:13,fontWeight:700,width:'100%',border:'none',cursor:busy?'default':'pointer',fontFamily:'Gotham,sans-serif'}}>
+          {busy?'Wird gespeichert…':'PIN ändern'}
+        </button>
+      </div>
+    </Modal>
+  );
+};
+
+// ─── Tutorial ─────────────────────────────────────────────────────────────────
+const TutorialModal = ({ sections, onClose }) => {
+  const [open, setOpen] = useState(sections[0] ? {[sections[0].id]:true} : {});
+  return (
+    <div className="tutorial-overlay" style={{position:'fixed',inset:0,zIndex:9997,background:'rgba(0,0,0,0.45)',display:'flex',alignItems:'flex-end',justifyContent:'center'}}>
+      <div className="tutorial-panel" style={{background:'#fff',borderRadius:'20px 20px 0 0',width:'100%',maxWidth:540,maxHeight:'88vh',display:'flex',flexDirection:'column',boxShadow:'0 -8px 40px rgba(0,0,0,0.15)'}}>
+        <div style={{padding:'20px 20px 0',display:'flex',alignItems:'center',gap:12,flexShrink:0}}>
+          <img src="/logo.png" style={{width:30,height:30,objectFit:'contain',mixBlendMode:'multiply',flexShrink:0}} alt="K21"/>
+          <div style={{flex:1}}>
+            <div style={{fontFamily:'Gotham,sans-serif',fontWeight:900,fontSize:15,letterSpacing:'-0.02em',color:'#0f172a'}}>App-Überblick</div>
+            <div style={{fontSize:11,color:'#94a3b8',marginTop:1}}>Angepasst an deine Rolle · nur beim ersten Start</div>
+          </div>
+          <button onClick={onClose} style={{padding:6,background:'none',border:'none',cursor:'pointer',color:'#94a3b8',fontSize:16,lineHeight:1,flexShrink:0}}>✕</button>
+        </div>
+        <div style={{flex:1,overflowY:'auto',padding:'8px 0 4px'}}>
+          {sections.map(s => (
+            <div key={s.id} style={{borderBottom:'1px solid rgba(0,0,0,0.06)'}}>
+              <button onClick={()=>setOpen(o=>({...o,[s.id]:!o[s.id]}))} style={{width:'100%',display:'flex',alignItems:'center',gap:12,padding:'12px 20px',background:'none',border:'none',cursor:'pointer',textAlign:'left'}}>
+                <span style={{fontSize:18,width:24,textAlign:'center',flexShrink:0}}>{s.emoji}</span>
+                <span style={{flex:1,fontWeight:700,fontSize:13,color:'#1e293b'}}>{s.title}</span>
+                <span style={{fontSize:10,color:'#94a3b8',display:'inline-block',transition:'transform .18s',transform:open[s.id]?'rotate(180deg)':'rotate(0deg)',flexShrink:0}}>▼</span>
+              </button>
+              {open[s.id] && (
+                <div style={{padding:'0 20px 12px 56px'}}>
+                  {s.items.map((item,j) => (
+                    <div key={j} style={{fontSize:12,color:'#475569',lineHeight:1.65,paddingBottom:3,display:'flex',gap:6}}>
+                      <span style={{color:'#cbd5e1',flexShrink:0}}>•</span><span>{item}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+        <div style={{padding:'14px 20px',borderTop:'1px solid rgba(0,0,0,0.08)',display:'flex',gap:10,flexShrink:0}}>
+          <button onClick={onClose} style={{flex:1,background:'rgba(0,0,0,0.06)',color:'#64748b',border:'none',borderRadius:10,padding:'11px',fontSize:12,fontWeight:600,cursor:'pointer'}}>Überspringen</button>
+          <button onClick={onClose} style={{flex:2,background:'#0f172a',color:'#fff',border:'none',borderRadius:10,padding:'11px',fontSize:13,fontWeight:700,cursor:'pointer',fontFamily:'Gotham,sans-serif'}}>Verstanden ✓</button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 // ─── App ──────────────────────────────────────────────────────────────────────
 const App = () => {
   const [user, setUser]           = useState(null);
@@ -3474,6 +3554,9 @@ const App = () => {
   const [page, setPage]           = useState('kasse');
   const [activeSchicht, setActiveSchicht] = useState(null);
   const [toasts, toast]           = useToast();
+  const [showPinChange, setShowPinChange] = useState(false);
+  const [showTutorial, setShowTutorial]   = useState(false);
+  const TUTORIAL_KEY = 'k21-tutorial-cafe-v1';
   const [profiles, setProfiles]   = useState(DEFAULT_CAFE_PROFILES);
   const [profile, setProfile]     = useState(DEFAULT_CAFE_PROFILES[0].id);
   const [appSettings, setAppSettings] = useState({ appName: 'K21 Café' });
@@ -3597,6 +3680,25 @@ const App = () => {
   });
 
   // Make sure current page is accessible (also respect admin exclusions)
+
+  // Show tutorial on first use per device (after DSGVO accepted)
+  const hasDsgvo = !!user?.dsgvoConsent;
+  useEffect(() => {
+    if (hasDsgvo && !localStorage.getItem(TUTORIAL_KEY)) setShowTutorial(true);
+  }, [hasDsgvo]);
+
+  const closeTutorial = () => { localStorage.setItem(TUTORIAL_KEY,'1'); setShowTutorial(false); };
+
+  const tutorialSections = [
+    { id:'kasse',    emoji:'🛒', title:'Kasse',              items:['Tippe auf ein Produkt um es in den Warenkorb zu legen','Mehrfach antippen erhöht die Menge','„Bezahlen" abschließen – Warenkorb wird geleert'] },
+    { id:'schicht',  emoji:'⏱', title:'Schichten',          items:['Starte eine Schicht über den Schicht-Tab bevor du die Kasse nutzt','Am Ende der Schicht Schicht beenden'] },
+    ...(user?.role==='owner' ? [
+      { id:'produkte', emoji:'🍰', title:'Produkte verwalten', items:['Produkte hinzufügen, bearbeiten und Kategorien zuweisen','Preise und Beschreibungen anpassen','Inventar-Tracking mit Warnschwellen aktivieren'] },
+      { id:'berichte', emoji:'📊', title:'Berichte & Export',  items:['Tagesumsätze und Bestellhistorie einsehen','Excel-Export für Abrechnungen'] },
+      { id:'benutzer', emoji:'👥', title:'Benutzer',           items:['Mitarbeiter-Profile anlegen und PINs setzen','Rollen: Kasse-Mitarbeiter oder Admin'] },
+    ] : []),
+    { id:'pin', emoji:'🔑', title:'PIN ändern', items:['Klicke auf das Schlüssel-Symbol neben dem Abmelden-Button'] },
+  ];
   const activePage = (() => {
     if (isAdminRole && (page==='kasse'||page==='bestellungen')) return visibleNav[0]?.id||'schicht';
     return can(user.role, NAV_ITEMS.find(n=>n.id===page)?.perm) ? page : (visibleNav[0]?.id||'schicht');
@@ -3676,6 +3778,9 @@ const App = () => {
               <Avatar name={user.name} color={user.farbe||'#8b5cf6'} size={28}/>
               <span className="text-white text-xs font-semibold hidden md:block">{user.name}</span>
             </div>
+            <button onClick={()=>setShowPinChange(true)} className="text-white/40 hover:text-white transition-all" title="PIN ändern">
+              <SI p={IC.key} size={15}/>
+            </button>
             <button onClick={()=>{ setSessToken(''); aFetch('/api/logout',{method:'POST'}); setUser(null); }} className="text-white/40 hover:text-white transition-all" title="Abmelden">
               <SI p={IC.logout} size={15}/>
             </button>
@@ -3740,6 +3845,8 @@ const App = () => {
         </Modal>
       )}
 
+      {showPinChange && <PinChangeModal onClose={()=>setShowPinChange(false)} onToast={toast}/>}
+      {showTutorial && <TutorialModal sections={tutorialSections} onClose={closeTutorial}/>}
       {/* Mobile bottom nav */}
       <nav className="mob-nav" style={{position:'fixed',bottom:0,left:0,right:0,zIndex:200,background:'#000',borderTop:'1px solid rgba(255,255,255,0.1)',paddingBottom:'env(safe-area-inset-bottom,0)'}}>
         {visibleNav.map(n=>(
