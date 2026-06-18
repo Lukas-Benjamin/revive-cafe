@@ -3690,14 +3690,54 @@ const App = () => {
   const closeTutorial = () => { localStorage.setItem(TUTORIAL_KEY,'1'); setShowTutorial(false); };
 
   const tutorialSections = [
-    { id:'kasse',    emoji:'🛒', title:'Kasse',              items:['Tippe auf ein Produkt um es in den Warenkorb zu legen','Mehrfach antippen erhöht die Menge','„Bezahlen" abschließen – Warenkorb wird geleert'] },
-    { id:'schicht',  emoji:'⏱', title:'Schichten',          items:['Starte eine Schicht über den Schicht-Tab bevor du die Kasse nutzt','Am Ende der Schicht Schicht beenden'] },
+    { id:'kasse', emoji:'🛒', title:'Kasse bedienen', items:[
+      'Tippe auf ein Produkt in der Produktliste um es in den Warenkorb zu legen',
+      'Mehrfach antippen erhöht die Menge – oder nutze die + / – Buttons direkt im Warenkorb',
+      'Einzelne Positionen entfernen: Auf den Artikel im Warenkorb tippen → Mülleimer-Symbol',
+      'Zahlungsart wählen (Bar, Karte, etc.) dann „Bezahlen" – Warenkorb wird automatisch geleert',
+      'Produkte nach Kategorie filtern mit den Kategorie-Buttons oben in der Produktliste',
+      'Tipp: Nutze die Suchfunktion wenn du viele Produkte hast um schnell zu finden',
+    ]},
+    { id:'schicht', emoji:'⏱', title:'Schichten verwalten', items:[
+      'Mitarbeiter müssen zuerst eine Schicht starten bevor sie die Kasse benutzen können',
+      'Schicht starten: Unter „Schicht" → „Schicht starten" tippen – Uhrzeit wird automatisch notiert',
+      'Während der Schicht werden alle Verkäufe dieser Schicht zugeordnet',
+      'Schicht beenden: „Schicht beenden" tippen – du siehst eine Zusammenfassung mit Umsatz und Anzahl Verkäufe',
+      'Admins können alle Schichten aller Mitarbeiter einsehen und verwalten',
+      'Tipp: Schicht immer ordentlich beenden damit die Berichte stimmen',
+    ]},
     ...(user?.role==='owner' ? [
-      { id:'produkte', emoji:'🍰', title:'Produkte verwalten', items:['Produkte hinzufügen, bearbeiten und Kategorien zuweisen','Preise und Beschreibungen anpassen','Inventar-Tracking mit Warnschwellen aktivieren'] },
-      { id:'berichte', emoji:'📊', title:'Berichte & Export',  items:['Tagesumsätze und Bestellhistorie einsehen','Excel-Export für Abrechnungen'] },
-      { id:'benutzer', emoji:'👥', title:'Benutzer',           items:['Mitarbeiter-Profile anlegen und PINs setzen','Rollen: Kasse-Mitarbeiter oder Admin'] },
+      { id:'produkte', emoji:'🍰', title:'Produkte & Kategorien', items:[
+        'Unter „Produkte" neue Artikel anlegen: Name, Preis, Kategorie und optionales Bild',
+        'Kategorien helfen bei der schnellen Auswahl an der Kasse – z. B. „Kaffee", „Kuchen", „Kalt"',
+        'Produkt bearbeiten: Auf das Stift-Symbol tippen, Änderung speichern',
+        'Produkt deaktivieren (statt löschen) wenn es saisonal nicht verfügbar ist',
+        'Inventar-Tracking aktivieren: Lagerbestand erfassen und Warnschwelle setzen (dann erscheint ein Hinweis wenn es knapp wird)',
+        'Tipp: Regelmäßig Preise prüfen und veraltete Produkte deaktivieren',
+      ]},
+      { id:'berichte', emoji:'📊', title:'Berichte & Auswertungen', items:[
+        'Unter „Finanzen" siehst du Tagesumsätze, Wochensummen und Top-Produkte',
+        'Zeitraum filtern: Tag, Woche, Monat oder eigener Zeitraum',
+        'Bestellhistorie zeigt jeden einzelnen Verkauf mit Uhrzeit, Mitarbeiter und Artikel',
+        'Excel-Export: Daten für Abrechnungen oder Buchhaltung herunterladen',
+        'Zahlungsarten-Aufschlüsselung zeigt wie viel bar vs. Karte bezahlt wurde',
+        'Tipp: Monatlichen Export machen und für die Buchhaltung archivieren',
+      ]},
+      { id:'benutzer', emoji:'👥', title:'Benutzer & Zugänge', items:[
+        'Unter „Personen" neue Mitarbeiter anlegen: Name und PIN festlegen',
+        'Rollen: „Kassierer" = nur Kasse und eigene Schichten; „Admin/Inhaber" = alles',
+        'PIN ist der Login-Code des Mitarbeiters – möglichst individuell vergeben',
+        'Mitarbeiter können ihren eigenen PIN später selbst ändern (Schlüssel-Symbol oben rechts)',
+        'Mitarbeiter deaktivieren wenn sie ausscheiden – damit sie sich nicht mehr einloggen können',
+        'Tipp: Niemals den eigenen Admin-PIN an Mitarbeiter weitergeben',
+      ]},
     ] : []),
-    { id:'pin', emoji:'🔑', title:'PIN ändern', items:['Klicke auf das Schlüssel-Symbol neben dem Abmelden-Button'] },
+    { id:'pin', emoji:'🔑', title:'PIN ändern', items:[
+      'Klicke oben rechts auf das Schlüssel-Symbol (neben dem Abmelden-Button)',
+      'Gib zuerst deinen aktuellen PIN ein – zur Sicherheit',
+      'Gib den neuen PIN ein (mind. 4 Zeichen) und bestätige ihn ein zweites Mal',
+      'Änderung gilt sofort – beim nächsten Login den neuen PIN verwenden',
+    ]},
   ];
   const activePage = (() => {
     if (isAdminRole && (page==='kasse'||page==='bestellungen')) return visibleNav[0]?.id||'schicht';
