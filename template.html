@@ -2,6 +2,7 @@
 <html lang="de">
 <head>
   <meta charset="UTF-8">
+  <script>window.__INVITE_TOKEN__=null;</script>
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <title>K21 Café</title>
   <link rel="preconnect" href="https://www.gstatic.com" crossorigin>
@@ -2915,7 +2916,7 @@ const FinanzenView = ({ cafe, toast, profile, profiles, user }) => {
 const PersonenView = ({ toast, profile, user }) => {
   const [users, setUsers] = useState([]);
   const [modal, setModal] = useState(null);
-  const [form, setForm] = useState({name:'',pin:'',role:'kassierer',farbe:'#8b5cf6',areaAccess:'__all__'});
+  const [form, setForm] = useState({name:'',pin:'',role:'kassierer',farbe:'#8b5cf6',areaAccess:'__all__',email:''});
   const [showPin, setShowPin] = useState(false);
   const [myPin, setMyPin]     = useState('');
   const [showMP, setShowMP]   = useState(false);
@@ -2981,8 +2982,8 @@ const PersonenView = ({ toast, profile, user }) => {
     toast('Person gelöscht','warn');
   };
 
-  const openAdd = () => { setForm({name:'',pin:'',role:'kassierer',farbe:'#8b5cf6',areaAccess:'__all__'}); setShowPin(false); setModal('add'); };
-  const openEdit = u => { setForm({name:u.name,pin:u.pin||'',role:u.role||'kassierer',farbe:u.farbe||'#8b5cf6',areaAccess:u.areaAccess||'__all__'}); setShowPin(false); setModal(u.id); };
+  const openAdd = () => { setForm({name:'',pin:'',role:'kassierer',farbe:'#8b5cf6',areaAccess:'__all__',email:''}); setShowPin(false); setModal('add'); };
+  const openEdit = u => { setForm({name:u.name,pin:u.pin||'',role:u.role||'kassierer',farbe:u.farbe||'#8b5cf6',areaAccess:u.areaAccess||'__all__',email:u.email||''}); setShowPin(false); setModal(u.id); };
 
   return (
     <div>
@@ -3036,6 +3037,7 @@ const PersonenView = ({ toast, profile, user }) => {
               </div>
             </div>
             <div className="flex items-center gap-2">
+              <button title="Einladen" onClick={()=>setInviteUser({id:u.id,name:u.name,email:u.email||''})} className="text-slate-400 hover:text-blue-500 transition-all"><SI p={IC.send} size={14}/></button>
               <button onClick={()=>openEdit(u)} className="text-slate-400 hover:text-slate-700 transition-all"><SI p={IC.edit} size={15}/></button>
               <button onClick={()=>del(u.id)} className="text-slate-400 hover:text-red-500 transition-all"><SI p={IC.trash} size={15}/></button>
             </div>
@@ -3049,6 +3051,10 @@ const PersonenView = ({ toast, profile, user }) => {
             <div>
               <label className="text-xs font-semibold text-slate-600 mb-1 block">Name</label>
               <input className={INP} value={form.name} onChange={e=>set('name',e.target.value)} placeholder="Max Mustermann" autoFocus/>
+            </div>
+            <div>
+              <label className="text-xs font-semibold text-slate-600 mb-1 block">E-Mail (optional, für Einladungen)</label>
+              <input type="email" className={INP} value={form.email||''} onChange={e=>set('email',e.target.value)} placeholder="vorname@example.de"/>
             </div>
             <div>
               <label className="text-xs font-semibold text-slate-600 mb-1 block">PIN</label>
@@ -3546,6 +3552,176 @@ const TutorialModal = ({ sections, onClose }) => {
   );
 };
 
+
+// ─── Invite Accept ─────────────────────────────────────────────────────────────
+const InviteAcceptScreen = ({ token, onAccepted }) => {
+  const [info, setInfo] = React.useState(null);
+  const [pin, setPin] = React.useState('');
+  const [pin2, setPin2] = React.useState('');
+  const [err, setErr] = React.useState('');
+  const [busy, setBusy] = React.useState(false);
+
+  React.useEffect(() => {
+    fetch(`/api/invite/${token}`)
+      .then(r=>r.json()).then(d=>{ if(d.userId) setInfo(d); else setErr(d.error||'Ungültiger Link'); })
+      .catch(()=>setErr('Verbindungsfehler'));
+  }, [token]);
+
+  const accept = async () => {
+    if (pin.length < 4) { setErr('PIN muss mind. 4 Zeichen haben'); return; }
+    if (pin !== pin2)   { setErr('PINs stimmen nicht überein'); return; }
+    setBusy(true);
+    try {
+      const r = await fetch(`/api/invite/${token}/accept`, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({newPin:pin}) });
+      const d = await r.json();
+      if (!r.ok) { setErr(d.error); setBusy(false); return; }
+      onAccepted(d);
+    } catch { setErr('Verbindungsfehler'); setBusy(false); }
+  };
+  const INP = {width:'100%',background:'rgba(0,0,0,0.04)',border:'1px solid rgba(0,0,0,0.1)',borderRadius:10,padding:'10px 12px',fontSize:14,boxSizing:'border-box'};
+  return (
+    <div style={{minHeight:'100vh',display:'flex',alignItems:'center',justifyContent:'center',background:'#f8fafc',padding:20}}>
+      <div style={{background:'#fff',borderRadius:20,padding:'32px 28px',maxWidth:380,width:'100%',boxShadow:'0 4px 24px rgba(0,0,0,0.08)'}}>
+        <div style={{textAlign:'center',marginBottom:24}}>
+          <img src="/logo.png" style={{width:48,height:48,objectFit:'contain',mixBlendMode:'multiply',margin:'0 auto 12px',display:'block'}} alt="K21"/>
+          <h1 style={{fontFamily:'Gotham,sans-serif',fontSize:20,fontWeight:900,color:'#0f172a',margin:0}}>Einladung annehmen</h1>
+          {info && <p style={{color:'#64748b',fontSize:13,marginTop:8,marginBottom:0}}>Hallo {info.userName}! Setze jetzt deinen persönlichen PIN.</p>}
+        </div>
+        {err && <div style={{background:'#fef2f2',color:'#b91c1c',borderRadius:8,padding:'8px 12px',fontSize:12,marginBottom:16}}>{err}</div>}
+        {!info && !err && <div style={{textAlign:'center',color:'#94a3b8',fontSize:13,padding:16}}>Lädt…</div>}
+        {info && (
+          <div style={{display:'flex',flexDirection:'column',gap:12}}>
+            <div>
+              <label style={{fontSize:12,color:'#64748b',display:'block',marginBottom:4}}>Neuer PIN (mind. 4 Zeichen)</label>
+              <input type="password" value={pin} onChange={e=>setPin(e.target.value)} placeholder="••••" style={INP} autoFocus/>
+            </div>
+            <div>
+              <label style={{fontSize:12,color:'#64748b',display:'block',marginBottom:4}}>PIN bestätigen</label>
+              <input type="password" value={pin2} onChange={e=>setPin2(e.target.value)} placeholder="••••" style={INP} onKeyDown={e=>e.key==='Enter'&&accept()}/>
+            </div>
+            <button onClick={accept} disabled={busy} style={{background:'#0f172a',color:'#fff',borderRadius:12,padding:13,fontSize:14,fontWeight:700,border:'none',cursor:busy?'default':'pointer',fontFamily:'Gotham,sans-serif',marginTop:4}}>
+              {busy ? 'Wird gespeichert…' : 'Einladung annehmen →'}
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
+// ─── Mail Settings Modal ────────────────────────────────────────────────────────
+const MailSettingsModal = ({ onClose, onToast }) => {
+  const [cfg, setCfg] = useState({ smtpHost:'', smtpPort:587, smtpUser:'', smtpPass:'', fromEmail:'', fromName:'' });
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [testBusy, setTestBusy] = useState(false);
+  const FLD = "w-full bg-black/5 border border-black/10 rounded-xl px-3 py-2.5 text-sm text-slate-800 placeholder-slate-500";
+
+  useEffect(() => {
+    aFetch('/api/mail-settings').then(r=>r.json()).then(d=>{ setCfg(p=>({...p,...d})); setLoading(false); }).catch(()=>setLoading(false));
+  }, []);
+
+  const save = async () => {
+    setBusy(true);
+    const r = await aFetch('/api/mail-settings', {method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(cfg)});
+    setBusy(false);
+    if (r.ok) { onToast && onToast('Mail-Einstellungen gespeichert ✓'); onClose(); }
+    else { const d=await r.json(); onToast && onToast(d.error||'Fehler','error'); }
+  };
+  const test = async () => {
+    setTestBusy(true);
+    const r = await aFetch('/api/mail-settings/test', {method:'POST'});
+    setTestBusy(false);
+    const d = await r.json();
+    if (r.ok) onToast && onToast('SMTP-Verbindung OK ✓');
+    else onToast && onToast(d.error||'SMTP Fehler','error');
+  };
+
+  return (
+    <Modal title="Mail-Einstellungen" onClose={onClose} wide={true}>
+      {loading ? <div style={{textAlign:'center',padding:24,color:'#94a3b8'}}>Lädt…</div> : (
+        <div style={{display:'flex',flexDirection:'column',gap:12}}>
+          <div style={{background:'rgba(59,130,246,0.06)',border:'1px solid rgba(59,130,246,0.15)',borderRadius:10,padding:'9px 12px',fontSize:12,color:'#1e40af'}}>
+            Diese Einstellungen werden für Einladungs-E-Mails verwendet. Tipp: Gmail-App-Passwort oder eigenen SMTP-Server verwenden.
+          </div>
+          <div style={{display:'grid',gridTemplateColumns:'1fr 80px',gap:8}}>
+            <div>
+              <label style={{fontSize:11,color:'#94a3b8',display:'block',marginBottom:3}}>SMTP-Server</label>
+              <input className={FLD} value={cfg.smtpHost||''} onChange={e=>setCfg(p=>({...p,smtpHost:e.target.value}))} placeholder="smtp.gmail.com"/>
+            </div>
+            <div>
+              <label style={{fontSize:11,color:'#94a3b8',display:'block',marginBottom:3}}>Port</label>
+              <input className={FLD} type="number" value={cfg.smtpPort||587} onChange={e=>setCfg(p=>({...p,smtpPort:parseInt(e.target.value)||587}))} placeholder="587"/>
+            </div>
+          </div>
+          <div>
+            <label style={{fontSize:11,color:'#94a3b8',display:'block',marginBottom:3}}>SMTP-Benutzername</label>
+            <input className={FLD} value={cfg.smtpUser||''} onChange={e=>setCfg(p=>({...p,smtpUser:e.target.value}))} placeholder="dein@gmail.com"/>
+          </div>
+          <div>
+            <label style={{fontSize:11,color:'#94a3b8',display:'block',marginBottom:3}}>SMTP-Passwort / App-Passwort</label>
+            <input className={FLD} type="password" value={cfg.smtpPass||''} onChange={e=>setCfg(p=>({...p,smtpPass:e.target.value}))} placeholder="••••••••"/>
+          </div>
+          <div style={{borderTop:'1px solid rgba(0,0,0,0.06)',paddingTop:10,marginTop:2}}>
+            <div style={{fontSize:11,fontWeight:600,color:'#94a3b8',marginBottom:8,letterSpacing:'.04em',textTransform:'uppercase'}}>Absender</div>
+          </div>
+          <div>
+            <label style={{fontSize:11,color:'#94a3b8',display:'block',marginBottom:3}}>Absender-Name</label>
+            <input className={FLD} value={cfg.fromName||''} onChange={e=>setCfg(p=>({...p,fromName:e.target.value}))} placeholder="K21 App"/>
+          </div>
+          <div>
+            <label style={{fontSize:11,color:'#94a3b8',display:'block',marginBottom:3}}>Absender-E-Mail</label>
+            <input className={FLD} type="email" value={cfg.fromEmail||''} onChange={e=>setCfg(p=>({...p,fromEmail:e.target.value}))} placeholder="noreply@k21.de"/>
+          </div>
+          <div style={{display:'flex',gap:8,marginTop:4}}>
+            <button onClick={test} disabled={testBusy} style={{flex:1,background:'rgba(0,0,0,0.05)',color:'#475569',border:'none',borderRadius:10,padding:10,fontSize:12,fontWeight:600,cursor:'pointer'}}>
+              {testBusy?'Teste…':'Verbindung testen'}
+            </button>
+            <button onClick={save} disabled={busy} style={{flex:2,background:'#0f172a',color:'#fff',border:'none',borderRadius:10,padding:10,fontSize:13,fontWeight:700,cursor:'pointer',fontFamily:'Gotham,sans-serif'}}>
+              {busy?'Speichert…':'Speichern'}
+            </button>
+          </div>
+        </div>
+      )}
+    </Modal>
+  );
+};
+
+
+// ─── Invite Modal ──────────────────────────────────────────────────────────────
+const InviteModal = ({ user: invUser, onClose, onToast }) => {
+  const [email, setEmail] = useState(invUser.email||'');
+  const [busy, setBusy] = useState(false);
+  const send = async () => {
+    if (!email.trim()) { onToast && onToast('Bitte E-Mail eingeben','error'); return; }
+    setBusy(true);
+    const r = await aFetch('/api/invite', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({userId:invUser.id,userName:invUser.name,userEmail:email.trim()})});
+    setBusy(false);
+    const d = await r.json();
+    if (r.ok) { onToast && onToast('Einladung gesendet ✓'); onClose(); }
+    else onToast && onToast(d.error||'Fehler','error');
+  };
+  const FLD = "w-full bg-black/5 border border-black/10 rounded-xl px-3 py-2.5 text-sm text-slate-800 placeholder-slate-500";
+  return (
+    <Modal title="Person einladen" onClose={onClose}>
+      <div style={{display:'flex',flexDirection:'column',gap:12}}>
+        <div style={{fontSize:13,color:'#475569',lineHeight:1.5}}>
+          Eine Einladungs-E-Mail an <strong>{invUser.name}</strong> senden.<br/>
+          <span style={{fontSize:11,color:'#94a3b8'}}>Der Nutzer erhält einen Link um seinen PIN selbst zu setzen.</span>
+        </div>
+        <div>
+          <label style={{fontSize:11,color:'#94a3b8',display:'block',marginBottom:4}}>E-Mail-Adresse</label>
+          <input type="email" value={email} onChange={e=>setEmail(e.target.value)} onKeyDown={e=>e.key==='Enter'&&send()}
+            placeholder="vorname@example.de" className={FLD} autoFocus/>
+        </div>
+        <button onClick={send} disabled={busy} style={{background:'#0f172a',color:'#fff',border:'none',borderRadius:12,padding:11,fontSize:13,fontWeight:700,cursor:busy?'default':'pointer',fontFamily:'Gotham,sans-serif'}}>
+          {busy ? 'Wird gesendet…' : '📧 Einladung senden'}
+        </button>
+      </div>
+    </Modal>
+  );
+};
+
 // ─── App ──────────────────────────────────────────────────────────────────────
 const App = () => {
   const [user, setUser]           = useState(null);
@@ -3557,6 +3733,9 @@ const App = () => {
   const [showPinChange, setShowPinChange] = useState(false);
   const [showTutorial, setShowTutorial]   = useState(false);
   const TUTORIAL_KEY = 'k21-tutorial-cafe-v1';
+  const [showMailSettings, setShowMailSettings] = useState(false);
+  const [inviteUser, setInviteUser] = useState(null);
+  const [inviteToken] = useState(() => window.__INVITE_TOKEN__ || null);
   const [profiles, setProfiles]   = useState(DEFAULT_CAFE_PROFILES);
   const [profile, setProfile]     = useState(DEFAULT_CAFE_PROFILES[0].id);
   const [appSettings, setAppSettings] = useState({ appName: 'K21 Café' });
@@ -3655,6 +3834,7 @@ const App = () => {
     toast(headerEdit==='new' ? 'Bereich erstellt ✓' : 'Bereich umbenannt ✓');
   };
 
+  if (inviteToken && !user) return <InviteAcceptScreen token={inviteToken} onAccepted={d=>{ setSessToken(d.token); setUser({id:d.id,name:d.name,role:d.role,farbe:d.farbe||'#8b5cf6',dsgvoConsent:d.dsgvoConsent||false}); window.__INVITE_TOKEN__=null; }}/>;
   if (!user) return <LoginView onLogin={(u, pid) => {
     const withConsent = {...u, dsgvoConsent: u.dsgvoConsent || (u.id==='__owner__' && !!localStorage.getItem('k21-dsgvo-admin'))};
     setUser(withConsent);
@@ -3885,6 +4065,8 @@ const App = () => {
         </Modal>
       )}
 
+      {showMailSettings && <MailSettingsModal onClose={()=>setShowMailSettings(false)} onToast={toast}/> }
+      {inviteUser && <InviteModal user={inviteUser} onClose={()=>setInviteUser(null)} onToast={toast}/>}
       {showPinChange && <PinChangeModal onClose={()=>setShowPinChange(false)} onToast={toast}/>}
       {showTutorial && <TutorialModal sections={tutorialSections} onClose={closeTutorial}/>}
       {/* Mobile bottom nav */}

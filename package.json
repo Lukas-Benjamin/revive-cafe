@@ -1,7 +1,7 @@
 {
   "name": "revive-cafe",
   "version": "1.0.0",
-  "description": "K21 Café – Kassensystem & Team-Verwaltung",
+  "description": "K21 Caf\u00e9 \u2013 Kassensystem & Team-Verwaltung",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
@@ -14,6 +14,7 @@
     "dotenv": "^16.0.0",
     "express": "^4.18.0",
     "postcss": "^8.4.0",
-    "tailwindcss": "^3.4.0"
+    "tailwindcss": "^3.4.0",
+    "nodemailer": "^6.9.0"
   }
 }

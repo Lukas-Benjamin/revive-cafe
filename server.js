@@ -16,6 +16,7 @@ app.use((req, res, next) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('X-Frame-Options', 'SAMEORIGIN');
   res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
   next();
 });
 
@@ -126,6 +127,7 @@ async function fsGetDoc(col, docId) {
 // ─── HMAC session system ──────────────────────────────────────────────────────
 const SESSION_SECRET = process.env.SESSION_SECRET ||
   crypto.createHash('sha256').update((process.env.FIREBASE_API_KEY || '') + ':session-v1').digest('hex');
+if (!process.env.SESSION_SECRET) console.warn('⚠️  SESSION_SECRET nicht gesetzt – bitte in Railway hinterlegen für maximale Sicherheit!');
 const SESSION_TTL = 7 * 24 * 3600_000;
 
 function createSession(user) {
@@ -172,6 +174,48 @@ function loginRateLimit(req, res, next) {
 
 // ─── API routes ──────────────────────────────────────────────────────────────
 // POST /api/login  { name, pin }  → verify credentials, return HMAC session token
+
+// ─── PIN-Sperre ────────────────────────────────────────────────────────────────
+const LOCK_COL = 'login-locks';
+const MAX_ATTEMPTS = 5;
+const LOCK_DURATION = 15 * 60_000;
+
+function inviteEmailHtml({ appName, userName, inviteUrl }) {
+  return `<!DOCTYPE html><html><body style="font-family:sans-serif;max-width:560px;margin:40px auto;color:#1e293b">
+  <div style="background:#0f172a;border-radius:12px;padding:24px 32px;margin-bottom:24px"><h1 style="color:#fff;font-size:22px;margin:0">${appName}</h1></div>
+  <h2 style="font-size:18px">Hallo ${userName},</h2>
+  <p>Du wurdest zu <strong>${appName}</strong> eingeladen. Klicke auf den Button um deinen PIN zu setzen:</p>
+  <div style="text-align:center;margin:32px 0"><a href="${inviteUrl}" style="background:#0f172a;color:#fff;border-radius:12px;padding:14px 32px;font-size:15px;font-weight:700;text-decoration:none;display:inline-block">Einladung annehmen →</a></div>
+  <p style="color:#64748b;font-size:13px">Dieser Link ist 7 Tage gültig.</p>
+  <p style="color:#64748b;font-size:12px">Direktlink: ${inviteUrl}</p>
+</body></html>`; }
+
+async function checkLock(name) {
+  try {
+    const key = 'login:' + String(name).trim().toLowerCase();
+    const d = await fsGetDoc(LOCK_COL, key) || {};
+    if (d.lockedUntil && Date.now() < d.lockedUntil)
+      return Math.ceil((d.lockedUntil - Date.now()) / 60000);
+  } catch {}
+  return null;
+}
+async function recordFail(name) {
+  try {
+    const key = 'login:' + String(name).trim().toLowerCase();
+    const d = await fsGetDoc(LOCK_COL, key) || { attempts: 0 };
+    if (d.lockedUntil && Date.now() < d.lockedUntil) return { locked: true, attempts: d.attempts };
+    const attempts = Math.min((d.attempts || 0) + 1, MAX_ATTEMPTS + 2);
+    const lockedUntil = attempts >= MAX_ATTEMPTS ? Date.now() + LOCK_DURATION : null;
+    await fsSet(LOCK_COL, key, { attempts, lockedUntil }).catch(() => {});
+    return { locked: attempts >= MAX_ATTEMPTS, attempts };
+  } catch { return { locked: false, attempts: 1 }; }
+}
+async function resetLock(name) {
+  try {
+    await fsSet(LOCK_COL, 'login:' + String(name).trim().toLowerCase(), { attempts: 0, lockedUntil: null });
+  } catch {}
+}
+
 app.post('/api/login', loginRateLimit, async (req, res) => {
   try {
     const { name, pin } = req.body || {};
@@ -359,9 +403,84 @@ build().catch(err => {
 app.use('/fonts', express.static(path.join(__dirname, 'fonts'), { maxAge: '365d' }));
 app.use('/logo.png', express.static(path.join(__dirname, 'logo.png'), { maxAge: '7d' }));
 
+
+// ─── Mail-Einstellungen ────────────────────────────────────────────────────────
+app.get('/api/mail-settings', authMiddleware, async (req, res) => {
+  if (!(req.user.role === 'owner' || req.user.id === '__owner__')) return res.status(403).json({ error: 'Nur Admin' });
+  const d = await fsGetDoc('config', 'mail') || {};
+  res.json({ ...d, smtpPass: d.smtpPass ? '••••' : '' });
+});
+
+app.put('/api/mail-settings', authMiddleware, async (req, res) => {
+  if (!(req.user.role === 'owner' || req.user.id === '__owner__')) return res.status(403).json({ error: 'Nur Admin' });
+  const { smtpHost, smtpPort, smtpUser, smtpPass, fromEmail, fromName } = req.body || {};
+  const existing = await fsGetDoc('config', 'mail') || {};
+  await fsSet('config', 'mail', { smtpHost, smtpPort: parseInt(smtpPort)||587, smtpUser, fromEmail, fromName,
+    smtpPass: smtpPass === '••••' ? existing.smtpPass : smtpPass });
+  res.json({ ok: true });
+});
+
+app.post('/api/mail-settings/test', authMiddleware, async (req, res) => {
+  if (!(req.user.role === 'owner' || req.user.id === '__owner__')) return res.status(403).json({ error: 'Nur Admin' });
+  let nodemailer; try { nodemailer = require('nodemailer'); } catch { return res.status(500).json({ error: 'nodemailer nicht installiert' }); }
+  const d = await fsGetDoc('config', 'mail') || {};
+  if (!d.smtpHost) return res.status(400).json({ error: 'SMTP nicht konfiguriert' });
+  try {
+    const t = nodemailer.createTransport({ host:d.smtpHost, port:d.smtpPort||587, secure:d.smtpPort===465, auth:{user:d.smtpUser,pass:d.smtpPass} });
+    await t.verify();
+    res.json({ ok: true });
+  } catch(e) { res.status(400).json({ error: e.message }); }
+});
+
+// ─── Einladungen ───────────────────────────────────────────────────────────────
+app.post('/api/invite', authMiddleware, async (req, res) => {
+  if (!(req.user.role === 'owner' || req.user.id === '__owner__')) return res.status(403).json({ error: 'Nur Admin' });
+  let nodemailer; try { nodemailer = require('nodemailer'); } catch { return res.status(500).json({ error: 'nodemailer nicht installiert – npm install nodemailer' }); }
+  const { userId, userName, userEmail } = req.body || {};
+  if (!userEmail) return res.status(400).json({ error: 'E-Mail fehlt' });
+  const mailCfg = await fsGetDoc('config', 'mail') || {};
+  if (!mailCfg.smtpHost) return res.status(400).json({ error: 'SMTP nicht konfiguriert – zuerst Mail-Einstellungen setzen' });
+  const token = crypto.randomBytes(32).toString('hex');
+  await fsSet('invites', token, { userId, userName, userEmail, expires: Date.now() + 7*24*3600_000, used: false });
+  const appUrl = req.headers['x-forwarded-proto'] ? `${req.headers['x-forwarded-proto']}://${req.get('host')}` : `http://${req.get('host')}`;
+  const inviteUrl = `${appUrl}/?invite=${token}`;
+  const appName = (await fsGetDoc('config', 'settings'))?.appName || 'K21 App';
+  try {
+    const t = nodemailer.createTransport({ host:mailCfg.smtpHost, port:mailCfg.smtpPort||587, secure:mailCfg.smtpPort===465, auth:{user:mailCfg.smtpUser,pass:mailCfg.smtpPass} });
+    await t.sendMail({
+      from: `"${mailCfg.fromName||appName}" <${mailCfg.fromEmail||mailCfg.smtpUser}>`,
+      to: `"${userName}" <${userEmail}>`,
+      subject: `Einladung zu ${appName}`,
+      html: inviteEmailHtml({ appName, userName, inviteUrl }),
+    });
+    res.json({ ok: true });
+  } catch(e) { res.status(500).json({ error: `E-Mail Fehler: ${e.message}` }); }
+});
+
+app.get('/api/invite/:token', async (req, res) => {
+  const d = await fsGetDoc('invites', req.params.token);
+  if (!d || d.used || d.expires < Date.now()) return res.status(404).json({ error: 'Ungültiger oder abgelaufener Link' });
+  res.json({ userId: d.userId, userName: d.userName });
+});
+
+app.post('/api/invite/:token/accept', rateLimit ? rateLimit(60_000, 10) : ((_,__,n)=>n()), async (req, res) => {
+  const { newPin } = req.body || {};
+  if (!newPin || String(newPin).length < 4) return res.status(400).json({ error: 'PIN muss mind. 4 Zeichen haben' });
+  const d = await fsGetDoc('invites', req.params.token);
+  if (!d || d.used || d.expires < Date.now()) return res.status(404).json({ error: 'Ungültiger oder abgelaufener Link' });
+  try {
+  const u = await fsGetDoc('cafe-users', d.userId);
+  if (!u) return res.status(404).json({ error: 'Benutzer nicht gefunden' });
+  await fsSet('cafe-users', d.userId, { ...u, pin: await bcrypt.hash(String(newPin), 12) });
+    await fsSet('invites', req.params.token, { ...d, used: true, usedAt: Date.now() });
+    const userInfo = { id: u.id, name: u.name, role: u.role||'kassierer', farbe: u.farbe||'#8b5cf6', dsgvoConsent: u.dsgvoConsent||false };
+    res.json({ ok: true, ...userInfo, token: createSession(userInfo) });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
 app.get('/', (req, res) => {
   if (!compiledHtml) { res.status(503).send('Wird gestartet…'); return; }
-  const html = compiledHtml.replace('"__FIREBASE_CONFIG__"', firebaseConfig);
+  let html = compiledHtml.replace('"__FIREBASE_CONFIG__"', firebaseConfig);
+  if (req.query.invite) html = html.replace('window.__INVITE_TOKEN__=null', `window.__INVITE_TOKEN__='${req.query.invite.replace(/[^a-f0-9]/g, '')}'`);
   res.setHeader('Content-Type', 'text/html; charset=utf-8');
   res.setHeader('Cache-Control', 'no-cache');
   res.send(html);
