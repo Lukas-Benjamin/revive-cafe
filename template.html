@@ -2913,7 +2913,7 @@ const FinanzenView = ({ cafe, toast, profile, profiles, user }) => {
 };
 
 // ─── PersonenView ─────────────────────────────────────────────────────────────
-const PersonenView = ({ toast, profile, user }) => {
+const PersonenView = ({ toast, profile, user, onInvite }) => {
   const [users, setUsers] = useState([]);
   const [modal, setModal] = useState(null);
   const [form, setForm] = useState({name:'',pin:'',role:'kassierer',farbe:'#8b5cf6',areaAccess:'__all__',email:''});
@@ -3037,7 +3037,7 @@ const PersonenView = ({ toast, profile, user }) => {
               </div>
             </div>
             <div className="flex items-center gap-2">
-              <button title="Einladen" onClick={()=>setInviteUser({id:u.id,name:u.name,email:u.email||''})} className="text-slate-400 hover:text-blue-500 transition-all"><SI p={IC.send} size={14}/></button>
+              <button title="Einladen" onClick={()=>onInvite({id:u.id,name:u.name,email:u.email||''})} className="text-slate-400 hover:text-blue-500 transition-all"><SI p={IC.send} size={14}/></button>
               <button onClick={()=>openEdit(u)} className="text-slate-400 hover:text-slate-700 transition-all"><SI p={IC.edit} size={15}/></button>
               <button onClick={()=>del(u.id)} className="text-slate-400 hover:text-red-500 transition-all"><SI p={IC.trash} size={15}/></button>
             </div>
@@ -3935,7 +3935,7 @@ const App = () => {
     if (activePage==='zahlungsmethoden') return <ZahlungsMethodenView cafe={cafe} toast={toast} profile={profile}/>;
     if (activePage==='inventar')         return <InventarView cafe={cafe} toast={toast} profile={profile}/>;
     if (activePage==='finanzen')         return <FinanzenView cafe={cafe} toast={toast} profile={profile} profiles={profiles} user={user}/>;
-    if (activePage==='personen')         return <PersonenView toast={toast} profile={profile} user={user}/>;
+    if (activePage==='personen')         return <PersonenView toast={toast} profile={profile} user={user} onInvite={setInviteUser}/>;
     if (activePage==='einstellungen')    return <EinstellungenView cafe={cafe} profile={profile} profiles={profiles} saveProfiles={saveProfiles} appSettings={appSettings} saveAppSettings={saveAppSettings} user={user} toast={toast}/>;
     return null;
   };

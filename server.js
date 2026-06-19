@@ -463,7 +463,7 @@ app.get('/api/invite/:token', async (req, res) => {
   res.json({ userId: d.userId, userName: d.userName });
 });
 
-app.post('/api/invite/:token/accept', rateLimit ? rateLimit(60_000, 10) : ((_,__,n)=>n()), async (req, res) => {
+app.post('/api/invite/:token/accept', loginRateLimit, async (req, res) => {
   const { newPin } = req.body || {};
   if (!newPin || String(newPin).length < 4) return res.status(400).json({ error: 'PIN muss mind. 4 Zeichen haben' });
   const d = await fsGetDoc('invites', req.params.token);
