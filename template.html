@@ -3819,6 +3819,13 @@ const App = () => {
     if (firstAllowed) setPage(firstAllowed.id);
   }, [user]);
 
+  // Show tutorial on first use per device (after DSGVO accepted).
+  // Must stay ABOVE the early returns below — calling a hook conditionally
+  // (i.e. after a return) breaks the Rules of Hooks and crashes on login.
+  useEffect(() => {
+    if (user?.dsgvoConsent && !localStorage.getItem(TUTORIAL_KEY)) setShowTutorial(true);
+  }, [user?.dsgvoConsent]);
+
   const saveHeaderEdit = () => {
     if (!headerEditName.trim()) return;
     let np;
@@ -3860,12 +3867,6 @@ const App = () => {
   });
 
   // Make sure current page is accessible (also respect admin exclusions)
-
-  // Show tutorial on first use per device (after DSGVO accepted)
-  const hasDsgvo = !!user?.dsgvoConsent;
-  useEffect(() => {
-    if (hasDsgvo && !localStorage.getItem(TUTORIAL_KEY)) setShowTutorial(true);
-  }, [hasDsgvo]);
 
   const closeTutorial = () => { localStorage.setItem(TUTORIAL_KEY,'1'); setShowTutorial(false); };
 
