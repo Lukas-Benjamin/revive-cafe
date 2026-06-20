@@ -3326,19 +3326,34 @@ const InventarView = ({ cafe, toast, profile }) => {
 };
 
 // ─── Einstellungen-Seite (owner/admin) ────────────────────────────────────────
-const EinstellungenView = ({ cafe, profile, profiles, saveProfiles, appSettings, saveAppSettings, user, toast }) => {
+const EinstellungenView = ({ cafe, profile, profiles, saveProfiles, appSettings, saveAppSettings, user, toast, initialTab, onInvite }) => {
+  const [tab, setTab] = useState(initialTab || 'allgemein');
+  useEffect(() => { if (initialTab) setTab(initialTab); }, [initialTab]);
+  const TABS = [
+    { id:'allgemein', label:'Allgemein' },
+    { id:'personen',  label:'Personen' },
+    { id:'bereiche',  label:'Bereiche' },
+    { id:'mail',      label:'E-Mail' },
+    { id:'sicherheit',label:'Sicherheit' },
+  ];
   const [appName, setAppName] = useState(appSettings.appName || 'K21 Café');
   const [waehrung, setWaehrung] = useState((cafe.einstellungen||{}).waehrung || 'EUR');
   const [minKarte, setMinKarte] = useState((cafe.einstellungen||{}).min_karten_betrag ?? 10);
-  const [edit, setEdit] = useState(null);     // {id|'new', label, color}
+  const [edit, setEdit] = useState(null);
   const [confirmDel, setConfirmDel] = useState(null);
+  const [showMailSettings, setShowMailSettings] = useState(false);
   const isOwner = (user.role||'').toLowerCase()==='owner';
 
-  const saveCafeEinst = () => {
-    const _d = {...DEFAULT_CAFE(), ...cafe, einstellungen:{...(cafe.einstellungen||{}), waehrung, min_karten_betrag:parseFloat(minKarte)||0}};
+  const saveCafeEinst = (extra={}) => {
+    const _d = {...DEFAULT_CAFE(), ...cafe, einstellungen:{...(cafe.einstellungen||{}), waehrung, min_karten_betrag:parseFloat(minKarte)||0, ...extra}};
     serverWrite(profile||'k21-cafe', _d);
     withRetry(() => adb.collection(profile||'k21-cafe').doc('data').set(_d), e=>toast(e.message,'error'));
     toast('Einstellungen gespeichert ✓');
+  };
+  const saveCafeKey = (key, val) => {
+    const _d = {...DEFAULT_CAFE(), ...cafe, einstellungen:{...(cafe.einstellungen||{}), [key]:val}};
+    serverWrite(profile||'k21-cafe', _d);
+    withRetry(() => adb.collection(profile||'k21-cafe').doc('data').set(_d), e=>toast(e.message,'error'));
   };
 
   const saveBereich = () => {
@@ -3360,58 +3375,90 @@ const EinstellungenView = ({ cafe, profile, profiles, saveProfiles, appSettings,
     toast('Bereich gelöscht ✓');
   };
 
+  const PILL = id => ({ background: tab===id ? '#0f172a' : 'rgba(0,0,0,0.05)', color: tab===id ? '#fff' : '#64748b', border:'none', cursor:'pointer' });
   return (
-    <div className="max-w-lg mx-auto space-y-4">
+    <div className="max-w-lg mx-auto space-y-4 up">
       <h1 className="text-xl font-bold grad">Einstellungen</h1>
-
-      <div className="glass rounded-2xl p-4 space-y-3">
-        <h3 className="font-semibold text-sm text-slate-800">Allgemein</h3>
-        <div>
-          <label className="text-slate-400 text-xs block mb-1.5">App-Name</label>
-          <input value={appName} onChange={e=>setAppName(e.target.value)} className={INP}/>
-        </div>
-        <div className="flex gap-3">
-          <div className="flex-1">
-            <label className="text-slate-400 text-xs block mb-1.5">Währung</label>
-            <input value={waehrung} onChange={e=>setWaehrung(e.target.value)} className={INP}/>
-          </div>
-          <div className="flex-1">
-            <label className="text-slate-400 text-xs block mb-1.5">Mindestbetrag Karte ({waehrung})</label>
-            <input type="number" value={minKarte} onChange={e=>setMinKarte(e.target.value)} className={INP}/>
-          </div>
-        </div>
-        <div className="flex gap-2">
-          <button onClick={()=>{ saveAppSettings({...appSettings, appName:appName.trim()||'K21 Café'}); saveCafeEinst(); }}
-            className="flex-1 bg-slate-900 hover:bg-slate-700 text-white font-bold py-2.5 text-sm rounded-xl transition-all">Speichern</button>
-        </div>
-        <p className="text-xs text-slate-400">Währung und Mindestbetrag gelten für den aktuellen Bereich „{(profiles.find(p=>p.id===profile)||{}).label||profile}".</p>
-      </div>
-
-      <div className="glass rounded-2xl p-4 space-y-2">
-        <div className="flex items-center justify-between">
-          <h3 className="font-semibold text-sm text-slate-800">Bereiche / Standorte</h3>
-          {isOwner && <button onClick={()=>setEdit({id:'new',label:'',color:COLOR_SWATCHES[0]})} className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-900 hover:bg-slate-700 text-white text-xs font-semibold rounded-lg transition-all"><SI p={IC.plus} size={13}/>Neuer Bereich</button>}
-        </div>
-        {!isOwner && <p className="text-xs text-slate-400">Nur der Owner kann Bereiche verwalten.</p>}
-        {profiles.map(p=>(
-          <div key={p.id} className="flex items-center gap-3 bg-black/5 rounded-lg px-3 py-2">
-            <span style={{width:12,height:12,borderRadius:'50%',background:p.color||'#8b5cf6',flexShrink:0}}/>
-            <span className="flex-1 text-sm text-slate-700">{p.label}{p.id===profile && <span className="text-slate-400"> · aktiv</span>}</span>
-            {isOwner && confirmDel===p.id ? (
-              <>
-                <button onClick={()=>delBereich(p.id)} className="text-xs text-red-500 font-semibold">Löschen</button>
-                <button onClick={()=>setConfirmDel(null)} className="text-xs text-slate-400">Abbrechen</button>
-              </>
-            ) : isOwner && (
-              <>
-                <button onClick={()=>setEdit({id:p.id,label:p.label,color:p.color||'#8b5cf6'})} className="p-1.5 text-slate-400 hover:text-slate-700"><SI p={IC.edit} size={14}/></button>
-                <button onClick={()=>setConfirmDel(p.id)} className="p-1.5 text-slate-400 hover:text-red-500"><SI p={IC.trash} size={14}/></button>
-              </>
-            )}
-          </div>
+      <div className="flex gap-1.5 flex-wrap">
+        {TABS.map(t=>(
+          <button key={t.id} onClick={()=>setTab(t.id)} className="pill transition-all" style={PILL(t.id)}>{t.label}</button>
         ))}
       </div>
-
+      <div className="glass rounded-2xl p-4">
+        {tab==='allgemein' && (
+          <div className="space-y-3">
+            <div>
+              <label className="text-slate-400 text-xs block mb-1.5">App-Name</label>
+              <input value={appName} onChange={e=>setAppName(e.target.value)} className={INP}/>
+            </div>
+            <div className="flex gap-3">
+              <div className="flex-1">
+                <label className="text-slate-400 text-xs block mb-1.5">Währung</label>
+                <input value={waehrung} onChange={e=>setWaehrung(e.target.value)} className={INP}/>
+              </div>
+              <div className="flex-1">
+                <label className="text-slate-400 text-xs block mb-1.5">Mindestbetrag Karte ({waehrung})</label>
+                <input type="number" value={minKarte} onChange={e=>setMinKarte(e.target.value)} className={INP}/>
+              </div>
+            </div>
+            <div className="divide-y divide-black/5 pt-1">
+              <Toggle label="Trinkgeld aktivieren" hint="Trinkgeld-Option beim Kassenabschluss anzeigen" value={(cafe.einstellungen||{}).trinkgeldEnabled!==false} onChange={v=>saveCafeKey('trinkgeldEnabled',v)}/>
+              <Toggle label="Schicht-Protokoll" hint="Tagesabschluss mit Schicht-Zusammenfassung aktivieren" value={(cafe.einstellungen||{}).schichtProtokoll!==false} onChange={v=>saveCafeKey('schichtProtokoll',v)}/>
+              <Toggle label="Inventar-Modul" hint="Lagerbestand und Inventar verwalten" value={(cafe.einstellungen||{}).inventarEnabled!==false} onChange={v=>saveCafeKey('inventarEnabled',v)}/>
+              <Toggle label="Bestellungs-Ansicht" hint="Bestell-Übersicht für die Küche anzeigen" value={(cafe.einstellungen||{}).bestellungenEnabled!==false} onChange={v=>saveCafeKey('bestellungenEnabled',v)}/>
+            </div>
+            <button onClick={()=>{ saveAppSettings({...appSettings, appName:appName.trim()||'K21 Café'}); saveCafeEinst(); }}
+              className="w-full bg-slate-900 hover:bg-slate-700 text-white font-bold py-2.5 text-sm rounded-xl transition-all">Speichern</button>
+            <p className="text-xs text-slate-400">Währung und Mindestbetrag gelten für den aktuellen Bereich „{(profiles.find(p=>p.id===profile)||{}).label||profile}".</p>
+          </div>
+        )}
+        {tab==='personen' && <PersonenView toast={toast} profile={profile} user={user} onInvite={onInvite}/>}
+        {tab==='bereiche' && (
+          <div className="space-y-2">
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-xs text-slate-500">Bereiche / Standorte (z.B. Revive, Schaumburg, Wunstorf)</p>
+              {isOwner && <button onClick={()=>setEdit({id:'new',label:'',color:COLOR_SWATCHES[0]})} className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-900 hover:bg-slate-700 text-white text-xs font-semibold rounded-lg transition-all"><SI p={IC.plus} size={13}/>Neu</button>}
+            </div>
+            {!isOwner && <p className="text-xs text-slate-400">Nur der Owner kann Bereiche verwalten.</p>}
+            {profiles.map(p=>(
+              <div key={p.id} className="flex items-center gap-3 bg-black/5 rounded-lg px-3 py-2">
+                <span style={{width:12,height:12,borderRadius:'50%',background:p.color||'#8b5cf6',flexShrink:0}}/>
+                <span className="flex-1 text-sm text-slate-700">{p.label}{p.id===profile && <span className="text-slate-400"> · aktiv</span>}</span>
+                {isOwner && confirmDel===p.id ? (
+                  <>
+                    <button onClick={()=>delBereich(p.id)} className="text-xs text-red-500 font-semibold">Löschen</button>
+                    <button onClick={()=>setConfirmDel(null)} className="text-xs text-slate-400">Abbrechen</button>
+                  </>
+                ) : isOwner && (
+                  <>
+                    <button onClick={()=>setEdit({id:p.id,label:p.label,color:p.color||'#8b5cf6'})} className="p-1.5 text-slate-400 hover:text-slate-700"><SI p={IC.edit} size={14}/></button>
+                    <button onClick={()=>setConfirmDel(p.id)} className="p-1.5 text-slate-400 hover:text-red-500"><SI p={IC.trash} size={14}/></button>
+                  </>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+        {tab==='mail' && (
+          <div className="space-y-3">
+            <p className="text-sm text-slate-500">SMTP-Zugang für Einladungs-E-Mails. Tipp: Gmail mit App-Passwort oder eigener SMTP-Server.</p>
+            <button onClick={()=>setShowMailSettings(true)} className="bg-slate-900 hover:bg-slate-700 text-white font-bold py-2.5 px-4 text-sm rounded-xl flex items-center gap-1.5">
+              <SI p={IC.send} size={14}/> Mail-Einstellungen öffnen
+            </button>
+            <p className="text-xs text-slate-400">Einladungen verschicke unter <b>Personen</b> über das ✉️-Symbol.</p>
+          </div>
+        )}
+        {tab==='sicherheit' && (
+          <div className="space-y-3">
+            <p className="text-sm text-slate-500 font-semibold">PIN-Sicherheit</p>
+            <div className="divide-y divide-black/5">
+              <Toggle label="PIN-Lockout" hint="Nach 5 Fehlversuchen: Account für 15 Min gesperrt" value={true} onChange={()=>{}} disabled/>
+            </div>
+            <p className="text-xs text-slate-400">Lockout ist immer aktiv und kann nicht deaktiviert werden.</p>
+          </div>
+        )}
+      </div>
+      {showMailSettings && <MailSettingsModal onClose={()=>setShowMailSettings(false)} onToast={toast}/>}
       {edit && (
         <div className="modal-overlay" style={{position:'fixed',inset:0,zIndex:5000,display:'flex',alignItems:'center',justifyContent:'center',padding:16,background:'rgba(0,0,0,0.75)'}} onClick={e=>{if(e.target===e.currentTarget)setEdit(null);}}>
           <div className="glass rounded-2xl w-full" style={{maxWidth:380}}>
@@ -3439,7 +3486,6 @@ const NAV_ITEMS = [
   { id:'zahlungsmethoden', label:'Zahlungen',     icon:IC.cash,    perm:'zahlungsmethoden' },
   { id:'inventar',         label:'Inventar',      icon:IC.box,     perm:'inventar' },
   { id:'finanzen',         label:'Finanzen',      icon:IC.chart,   perm:'finanzen' },
-  { id:'personen',         label:'Personen',      icon:IC.users,   perm:'personen' },
   { id:'einstellungen',    label:'Einstellungen', icon:IC.cog,     perm:'einstellungen' },
 ];
 
@@ -3936,8 +3982,8 @@ const App = () => {
     if (activePage==='zahlungsmethoden') return <ZahlungsMethodenView cafe={cafe} toast={toast} profile={profile}/>;
     if (activePage==='inventar')         return <InventarView cafe={cafe} toast={toast} profile={profile}/>;
     if (activePage==='finanzen')         return <FinanzenView cafe={cafe} toast={toast} profile={profile} profiles={profiles} user={user}/>;
-    if (activePage==='personen')         return <PersonenView toast={toast} profile={profile} user={user} onInvite={setInviteUser}/>;
-    if (activePage==='einstellungen')    return <EinstellungenView cafe={cafe} profile={profile} profiles={profiles} saveProfiles={saveProfiles} appSettings={appSettings} saveAppSettings={saveAppSettings} user={user} toast={toast}/>;
+    if (activePage==='einstellungen' || activePage==='personen')
+      return <EinstellungenView cafe={cafe} profile={profile} profiles={profiles} saveProfiles={saveProfiles} appSettings={appSettings} saveAppSettings={saveAppSettings} user={user} toast={toast} onInvite={setInviteUser} initialTab={activePage==='personen'?'personen':'allgemein'}/>;
     return null;
   };
 
