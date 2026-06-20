@@ -3325,6 +3325,18 @@ const InventarView = ({ cafe, toast, profile }) => {
   );
 };
 
+const Toggle = ({ label, hint, value, onChange }) => (
+  <label className="flex items-center justify-between gap-3 cursor-pointer py-1.5">
+    <div>
+      <div className="text-sm text-slate-700 font-medium">{label}</div>
+      {hint && <div className="text-xs text-slate-400">{hint}</div>}
+    </div>
+    <button type="button" onClick={()=>onChange(!value)} style={{width:42,height:24,borderRadius:99,flexShrink:0,background:value?'#10b981':'rgba(0,0,0,0.15)',position:'relative',transition:'background .2s'}}>
+      <span style={{position:'absolute',top:2,left:value?20:2,width:20,height:20,borderRadius:'50%',background:'#fff',transition:'left .2s',boxShadow:'0 1px 3px rgba(0,0,0,0.2)'}}/>
+    </button>
+  </label>
+);
+
 // ─── Einstellungen-Seite (owner/admin) ────────────────────────────────────────
 const EinstellungenView = ({ cafe, profile, profiles, saveProfiles, appSettings, saveAppSettings, user, toast, initialTab, onInvite }) => {
   const [tab, setTab] = useState(initialTab || 'allgemein');
