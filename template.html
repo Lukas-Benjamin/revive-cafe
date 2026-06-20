@@ -3919,8 +3919,11 @@ const App = () => {
   if (!user.dsgvoConsent) return <DsgvoConsent appName="K21 Café" onAccept={acceptDsgvo}/>;
 
   const isAdminRole = ['owner','admin'].includes((user.role||'').toLowerCase());
+  const einst = cafe.einstellungen||{};
   const visibleNav = NAV_ITEMS.filter(n=>{
     if (isAdminRole && (n.id==='kasse'||n.id==='bestellungen')) return false;
+    if (n.id==='inventar'    && einst.inventarEnabled===false)    return false;
+    if (n.id==='bestellungen'&& einst.bestellungenEnabled===false) return false;
     return can(user.role,n.perm);
   });
 
